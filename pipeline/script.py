@@ -36,12 +36,22 @@ def _ollama_script(prompt, model):
 
 
 def _deepseek_script(prompt, model="deepseek-chat"):
-    api_key = os.environ.get("DEEPSEEK_API_KEY")
+    return _chat_script(prompt, model, "DeepSeek", "DEEPSEEK_API_KEY",
+                        "https://api.deepseek.com/v1/chat/completions")
+
+
+def _openrouter_script(prompt, model):
+    return _chat_script(prompt, model, "OpenRouter", "OPENROUTER_API_KEY",
+                        "https://openrouter.ai/api/v1/chat/completions")
+
+
+def _chat_script(prompt, model, name, env_key, url):
+    api_key = os.environ.get(env_key)
     if not api_key:
-        raise ValueError("DEEPSEEK_API_KEY not set in .env")
+        raise ValueError(f"{env_key} not set in .env")
     try:
         resp = requests.post(
-            "https://api.deepseek.com/v1/chat/completions",
+            url,
             headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
             json={"model": model, "messages": [{"role": "user", "content": prompt}]},
             timeout=60,
@@ -53,32 +63,6 @@ def _deepseek_script(prompt, model="deepseek-chat"):
         result["_token_count"] = data["usage"]["total_tokens"]
         return result
     except requests.RequestException as e:
-        raise RuntimeError(f"DeepSeek API error: {e}")
+        raise RuntimeError(f"{name} API error: {e}")
     except (json.JSONDecodeError, KeyError) as e:
-        raise RuntimeError(f"DeepSeek returned invalid response: {e}")
-
-
-def _openrouter_script(prompt, model):
-    api_key = os.environ.get("OPENROUTER_API_KEY")
-    if not api_key:
-        raise ValueError("OPENROUTER_API_KEY not set in .env")
-    try:
-        resp = requests.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json={"model": model, "messages": [{"role": "user", "content": prompt}]},
-            timeout=60,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        content = data["choices"][0]["message"]["content"]
-        result = json.loads(content)
-        result["_token_count"] = data["usage"]["total_tokens"]
-        return result
-    except requests.RequestException as e:
-        raise RuntimeError(f"OpenRouter API error: {e}")
-    except (json.JSONDecodeError, KeyError) as e:
-        raise RuntimeError(f"OpenRouter returned invalid response: {e}")
+        raise RuntimeError(f"{name} returned invalid response: {e}")

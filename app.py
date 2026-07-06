@@ -14,7 +14,7 @@ from pipeline.script import generate_script  # noqa: E402
 from pipeline.transcribe import transcribe  # noqa: E402
 from pipeline.images import generate_images  # noqa: E402
 from pipeline.assemble import assemble  # noqa: E402
-from pipeline.cost import estimate_image_cost, estimate_llm_cost, format_estimate  # noqa: E402
+from pipeline.cost import PRICES  # noqa: E402
 
 PROJECTS_DIR = "output"
 STEP_NAMES = ["audio", "transcribe", "images", "assemble"]
@@ -188,39 +188,22 @@ def _save_project(path, data):
         json.dump(data, f, indent=2)
 
 
-def _load_project(path):
-    with open(f"{path}/project.json") as f:
-        return json.load(f)
-
-
-def _detect_steps(path):
-    """Detect completed steps from existing files, return steps dict."""
+def _load_or_backfill(path):
+    pid = os.path.basename(path)
     steps = {s: {"status": "pending"} for s in STEP_NAMES}
     steps["script"] = {"status": "done"}
-    has_audio = os.path.exists(f"{path}/audio.mp3")
-    imgs = sorted(glob.glob(f"{path}/img_*.png"))
-    has_video = os.path.exists(f"{path}/final.mp4")
-    has_transcript = os.path.exists(f"{path}/transcript.json")
-    if has_audio:
+    if os.path.exists(f"{path}/audio.mp3"):
         steps["audio"] = {"status": "done"}
-    if has_transcript or (has_audio and has_video):
+    if os.path.exists(f"{path}/transcript.json") or (os.path.exists(f"{path}/audio.mp3") and os.path.exists(f"{path}/final.mp4")):
         steps["transcribe"] = {"status": "done"}
-    if imgs:
+    if sorted(glob.glob(f"{path}/img_*.png")):
         steps["images"] = {"status": "done"}
-    if has_video:
+    if os.path.exists(f"{path}/final.mp4"):
         steps["assemble"] = {"status": "done"}
-    return steps
-
-
-def _load_or_backfill(path):
-    """Load project.json, backfill from files if missing or stale."""
-    pid = os.path.basename(path)
-    detected = _detect_steps(path)
-    complete = all(detected[s]["status"] == "done" for s in STEP_NAMES)
+    complete = all(steps[s]["status"] == "done" for s in STEP_NAMES)
     if os.path.exists(f"{path}/project.json"):
-        proj = _load_project(path)
-        # refresh steps from disk detection
-        proj["steps"] = detected
+        proj = json.load(open(f"{path}/project.json"))
+        proj["steps"] = steps
         proj["status"] = "completed" if complete else "in_progress"
         _save_project(path, proj)
         return proj
@@ -229,7 +212,7 @@ def _load_or_backfill(path):
         "source_text": "", "narration": "", "image_prompts": [],
         "voice_id": "", "image_model": "", "image_model_label": "",
         "image_style": "", "llm_provider": "",
-        "steps": detected,
+        "steps": steps,
     }
     _save_project(path, proj)
     return proj
@@ -317,9 +300,20 @@ with tab_gen:
                      "Grok": "openrouter_grok_imagine"}.get(
             next((k for k in ["Lite", "Pro", "Grok"] if k in label), ""), "openrouter_gemini_flash"
         )
-        img_cost = 0 if img_model[2] == "local" else estimate_image_cost(imgs, model_key)
-        llm_cost = 0 if "Ollama" in llm_provider else estimate_llm_cost(result.get("_token_count", 0), "deepseek" if "DeepSeek" in llm_provider else "openrouter")
-        st.code(format_estimate(img_cost, llm=llm_cost), language="text")
+        img_cost = 0 if img_model[2] == "local" else round(imgs * PRICES[model_key], 4)
+        tokens = result.get("_token_count", 0)
+        if "Ollama" in llm_provider:
+            llm_cost = 0
+        else:
+            llm_key = "deepseek_llm" if "DeepSeek" in llm_provider else "openrouter_llm"
+            llm_cost = round(tokens * PRICES[llm_key], 4)
+        total = img_cost + llm_cost
+        lines = [f"Images .......................... ${img_cost:.2f}"]
+        if llm_cost:
+            lines.append(f"LLM ............................. ${llm_cost:.2f}")
+        lines.append("-" * 40)
+        lines.append(f"Total ........................... ${total:.2f}")
+        st.code("\n".join(lines), language="text")
         with st.expander("View generated script"):
             st.write("**Narration:**")
             st.write(result["narration"])
@@ -430,7 +424,7 @@ with tab_projects:
             if proj.get("status") in ("failed", "in_progress"):
                 if st.button("Resume", key=f"resume_{pid}"):
                     out_dir = f"{PROJECTS_DIR}/{pid}"
-                    proj = _load_project(out_dir)
+                    proj = json.load(open(f"{out_dir}/project.json"))
                     steps = proj["steps"]
 
                     status = st.empty()
