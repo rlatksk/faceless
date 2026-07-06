@@ -193,6 +193,39 @@ def _load_project(path):
         return json.load(f)
 
 
+def _backfill_project(path):
+    """Detect project state from existing files, create project.json."""
+    pid = os.path.basename(path)
+    steps = {s: {"status": "pending"} for s in STEP_NAMES}
+    steps["script"] = {"status": "done"}
+    imgs = sorted(glob.glob(f"{path}/img_*.png"))
+    if os.path.exists(f"{path}/audio.mp3"):
+        steps["audio"] = {"status": "done"}
+    if os.path.exists(f"{path}/transcript.json"):
+        steps["transcribe"] = {"status": "done"}
+    if imgs:
+        steps["images"] = {"status": "done"}
+    if imgs and os.path.exists(f"{path}/audio.mp3") and os.path.exists(f"{path}/final.mp4"):
+        steps["assemble"] = {"status": "done"}
+    complete = all(steps[s]["status"] == "done" for s in STEP_NAMES)
+    proj = {
+        "id": pid, "status": "completed" if complete else "in_progress",
+        "created": "",
+        "source_text": "", "narration": "", "image_prompts": [],
+        "voice_id": "", "image_model": "", "image_model_label": "",
+        "image_style": "", "llm_provider": "",
+        "steps": steps,
+    }
+    _save_project(path, proj)
+    return proj
+
+
+def _load_or_backfill(path):
+    if os.path.exists(f"{path}/project.json"):
+        return _load_project(path)
+    return _backfill_project(path)
+
+
 st.set_page_config(page_title="Faceless", layout="centered")
 st.markdown(f"<style>{_CSS}</style>", unsafe_allow_html=True)
 
@@ -344,14 +377,15 @@ with tab_projects:
     dirs = sorted([
         d for d in os.listdir(PROJECTS_DIR)
         if os.path.isdir(f"{PROJECTS_DIR}/{d}")
-        and os.path.exists(f"{PROJECTS_DIR}/{d}/project.json")
+        and (os.path.exists(f"{PROJECTS_DIR}/{d}/project.json")
+             or len(os.listdir(f"{PROJECTS_DIR}/{d}")) > 0)
     ], reverse=True)
 
     if not dirs:
         st.info("No projects yet. Go to Generate tab to create one.")
 
     for pid in dirs:
-        proj = _load_project(f"{PROJECTS_DIR}/{pid}")
+        proj = _load_or_backfill(f"{PROJECTS_DIR}/{pid}")
         steps = proj.get("steps", {})
         done = sum(1 for s in STEP_NAMES if steps.get(s, {}).get("status") == "done")
         pct = int(done / len(STEP_NAMES) * 100)
