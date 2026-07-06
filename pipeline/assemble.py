@@ -31,12 +31,20 @@ def assemble(image_paths, audio_path, timestamps, output_path, fps=24):
 def _segment_boundaries(timestamps, n_segments):
     if n_segments <= 1 or not timestamps:
         return [0.0, timestamps[-1]["end"] if timestamps else 0.0]
-    words_per = len(timestamps) / n_segments
+    total_dur = timestamps[-1]["end"]
+    seg_dur = total_dur / n_segments
+    sentence_ends = [i for i, t in enumerate(timestamps)
+                     if t["word"].rstrip(".,!?\"';:)]}")[-1:] in (".", "!", "?")]
     starts = [timestamps[0]["start"]]
     for i in range(1, n_segments):
-        idx = int(i * words_per)
-        if idx < len(timestamps):
-            starts.append(timestamps[idx]["start"])
+        target = seg_dur * i
+        best_idx = min(range(len(timestamps)),
+                       key=lambda j: abs(timestamps[j]["end"] - target))
+        if sentence_ends:
+            closest = min(sentence_ends, key=lambda idx: abs(timestamps[idx]["end"] - target))
+            if abs(timestamps[closest]["end"] - target) < abs(timestamps[best_idx]["end"] - target):
+                best_idx = closest
+        starts.append(timestamps[best_idx]["end"])
     return starts
 
 

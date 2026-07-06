@@ -11,7 +11,7 @@ Source: {source_text}
 
 Return JSON: {{"narration": "voiceover text", "image_prompts": ["prompt1", "prompt2", ...]}}
 Each image_prompt describes one scene for AI image generation.
-Keep narration under 500 words. Generate 5-12 image prompts depending on story length."""
+Keep narration under 500 words. Generate at most 10 image prompts (one per sentence or scene change)."""
 
     if provider == "ollama":
         return _ollama_script(prompt, model)
