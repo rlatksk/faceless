@@ -193,9 +193,8 @@ def _load_project(path):
         return json.load(f)
 
 
-def _backfill_project(path):
-    """Detect project state from existing files, create project.json."""
-    pid = os.path.basename(path)
+def _detect_steps(path):
+    """Detect completed steps from existing files, return steps dict."""
     steps = {s: {"status": "pending"} for s in STEP_NAMES}
     steps["script"] = {"status": "done"}
     has_audio = os.path.exists(f"{path}/audio.mp3")
@@ -210,23 +209,30 @@ def _backfill_project(path):
         steps["images"] = {"status": "done"}
     if has_video:
         steps["assemble"] = {"status": "done"}
-    complete = all(steps[s]["status"] == "done" for s in STEP_NAMES)
-    proj = {
-        "id": pid, "status": "completed" if complete else "in_progress",
-        "created": "",
-        "source_text": "", "narration": "", "image_prompts": [],
-        "voice_id": "", "image_model": "", "image_model_label": "",
-        "image_style": "", "llm_provider": "",
-        "steps": steps,
-    }
-    _save_project(path, proj)
-    return proj
+    return steps
 
 
 def _load_or_backfill(path):
+    """Load project.json, backfill from files if missing or stale."""
+    pid = os.path.basename(path)
+    detected = _detect_steps(path)
+    complete = all(detected[s]["status"] == "done" for s in STEP_NAMES)
     if os.path.exists(f"{path}/project.json"):
-        return _load_project(path)
-    return _backfill_project(path)
+        proj = _load_project(path)
+        # refresh steps from disk detection
+        proj["steps"] = detected
+        proj["status"] = "completed" if complete else "in_progress"
+        _save_project(path, proj)
+        return proj
+    proj = {
+        "id": pid, "status": "completed" if complete else "in_progress", "created": "",
+        "source_text": "", "narration": "", "image_prompts": [],
+        "voice_id": "", "image_model": "", "image_model_label": "",
+        "image_style": "", "llm_provider": "",
+        "steps": detected,
+    }
+    _save_project(path, proj)
+    return proj
 
 
 st.set_page_config(page_title="Faceless", layout="centered")
