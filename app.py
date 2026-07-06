@@ -20,86 +20,107 @@ PROJECTS_DIR = "output"
 STEP_NAMES = ["audio", "transcribe", "images", "assemble"]
 
 _CSS = """
-@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=DM+Sans:wght@400;500;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Teko:wght@400;600;700&family=Inter:wght@400;500;600;700&display=swap');
 
 .stApp {
-    background: #0c0c14;
+    background: #000;
 }
 
-h1, h2, h3 {
-    font-family: 'Playfair Display', serif;
-    font-weight: 700;
-    letter-spacing: -0.02em;
+/* film grain overlay */
+.stApp::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    background-repeat: repeat;
+    background-size: 256px 256px;
+    opacity: 0.035;
+    pointer-events: none;
+    z-index: 9999;
 }
 
 h1 {
-    background: linear-gradient(135deg, #e0dcd0 0%, #d4a574 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    font-style: italic;
+    font-family: 'Teko', sans-serif;
+    font-weight: 700;
+    font-size: 3rem !important;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    line-height: 1;
+    margin-bottom: 0;
+}
+
+h2, h3 {
+    font-family: 'Teko', sans-serif;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
 }
 
 .stTabs [data-baseweb="tab-list"] {
     gap: 0;
-    border-bottom: 1px solid rgba(212, 165, 116, 0.15);
+    border-bottom: 2px solid #1a1a1a;
 }
 
 .stTabs [data-baseweb="tab"] {
-    font-family: 'DM Sans', sans-serif;
-    font-weight: 500;
+    font-family: 'Teko', sans-serif;
+    font-weight: 600;
+    font-size: 1rem;
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    font-size: 0.75rem;
-    color: #6b6b7a;
-    transition: color 0.2s;
+    color: #555;
+    padding: 0.5rem 1.5rem;
 }
 
 .stTabs [aria-selected="true"] {
-    color: #d4a574 !important;
+    color: #ff2b2b !important;
 }
 
 div[data-testid="stButton"] > button {
-    font-family: 'DM Sans', sans-serif;
-    font-weight: 700;
-    letter-spacing: 0.05em;
-    border-radius: 0;
-    transition: all 0.2s;
+    font-family: 'Inter', sans-serif;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    border-radius: 2px;
+    transition: all 0.15s;
+    font-size: 0.8rem;
 }
 
 div[data-testid="stButton"] > button[kind="primary"] {
-    background: linear-gradient(135deg, #d4a574 0%, #b8864e 100%);
+    background: #ff2b2b;
     border: none;
-    color: #0c0c14;
-    font-size: 0.85rem;
+    color: #fff;
+    font-size: 0.9rem;
     text-transform: uppercase;
+    letter-spacing: 0.08em;
 }
 
 div[data-testid="stButton"] > button[kind="primary"]:hover {
-    background: linear-gradient(135deg, #e0b88a 0%, #c4935a 100%);
-    box-shadow: 0 4px 20px rgba(212, 165, 116, 0.25);
+    background: #cc0000;
+    box-shadow: none;
 }
 
 div[data-testid="stButton"] > button:not([kind="primary"]) {
     background: transparent;
-    border: 1px solid rgba(212, 165, 116, 0.25);
-    color: #d4a574;
-    font-size: 0.75rem;
+    border: 1px solid #333;
+    color: #888;
+    text-transform: uppercase;
 }
 
 div[data-testid="stButton"] > button:not([kind="primary"]):hover {
-    border-color: #d4a574;
-    background: rgba(212, 165, 116, 0.08);
+    border-color: #ff2b2b;
+    color: #ff2b2b;
+    background: transparent;
 }
 
+/* card-like containers */
 div[data-testid="stExpander"] {
-    border: 1px solid rgba(212, 165, 116, 0.1);
-    border-radius: 0;
-    background: rgba(24, 24, 34, 0.6);
+    border: 1px solid #1a1a1a;
+    border-radius: 2px;
+    background: #0a0a0a;
     margin-bottom: 0.75rem;
 }
 
 div[data-testid="stExpander"] summary {
-    font-family: 'DM Sans', sans-serif;
+    font-family: 'Inter', sans-serif;
     font-weight: 500;
 }
 
@@ -108,33 +129,56 @@ div[data-testid="stExpander"] summary span {
 }
 
 .stTextArea textarea, div[data-testid="stTextInput"] input {
-    background: rgba(24, 24, 34, 0.8);
-    border: 1px solid rgba(212, 165, 116, 0.12);
-    border-radius: 0;
-    font-family: 'DM Sans', sans-serif;
+    background: #0a0a0a;
+    border: 1px solid #1a1a1a;
+    border-radius: 2px;
+    font-family: 'Inter', sans-serif;
+    font-size: 0.9rem;
+    color: #f5f5f5;
 }
 
 .stTextArea textarea:focus, div[data-testid="stTextInput"] input:focus {
-    border-color: #d4a574;
-    box-shadow: 0 0 0 1px rgba(212, 165, 116, 0.2);
+    border-color: #ff2b2b;
+    box-shadow: none;
+}
+
+.stTextArea textarea::placeholder {
+    color: #444;
 }
 
 div[data-testid="stRadio"] label {
-    font-family: 'DM Sans', sans-serif;
+    font-family: 'Inter', sans-serif;
     font-size: 0.8rem;
 }
 
 div[role="progressbar"] > div {
-    background: linear-gradient(90deg, #d4a574, #b8864e) !important;
+    background: #ff2b2b !important;
+    border-radius: 1px;
+}
+
+div[role="progressbar"] {
+    background: #1a1a1a !important;
+    border-radius: 1px;
 }
 
 div[role="alert"] {
-    border-left: 3px solid #d4a574;
+    border-left: 3px solid #ff2b2b;
     border-radius: 0;
+    background: #0a0a0a;
 }
 
-section[data-testid="stSidebar"] {
-    background: #0c0c14;
+.stCodeBlock {
+    background: #0a0a0a !important;
+    border: 1px solid #1a1a1a;
+    border-radius: 2px;
+}
+
+.stSelectBox [data-baseweb="select"] {
+    border-radius: 2px;
+}
+
+.stSpinner {
+    color: #ff2b2b;
 }
 """
 
@@ -152,20 +196,21 @@ def _load_project(path):
 st.set_page_config(page_title="Faceless", layout="centered")
 st.markdown(f"<style>{_CSS}</style>", unsafe_allow_html=True)
 
+st.markdown(
+    '<h1 style="margin-bottom:0">FACELESS</h1>'
+    '<p style="font-family:Inter,sans-serif;font-size:0.75rem;color:#555;'
+    'letter-spacing:0.15em;text-transform:uppercase;margin-top:-0.25rem">'
+    'vertical video generator</p>',
+    unsafe_allow_html=True,
+)
+
 if not os.getenv("OPENROUTER_API_KEY"):
-    st.warning("\u26a0\ufe0f OPENROUTER_API_KEY not set in .env")
+    st.warning("OPENROUTER_API_KEY not set in .env")
 
 tab_gen, tab_projects = st.tabs(["Generate", "Projects"])
 
 with tab_gen:
-    st.markdown(
-        '<p style="font-family: DM Sans, sans-serif; font-size: 0.85rem; '
-        'color: #6b6b7a; margin-top: -0.5rem;">Source text &rarr; narration '
-        '&rarr; images &rarr; video</p>',
-        unsafe_allow_html=True,
-    )
-
-    source = st.text_area("Source script", height=160, label_visibility="collapsed",
+    source = st.text_area("Source script", height=140, label_visibility="collapsed",
                           placeholder="Paste your story or script here...")
 
     col1, col2 = st.columns(2)
@@ -184,23 +229,23 @@ with tab_gen:
     with col2:
         img_model = st.selectbox(
             "Image Model",
-            [("Gemini 3.1 Flash Lite Image \u2014 ~$0.035/img", "google/gemini-3.1-flash-lite-image", "openrouter"),
-             ("Grok Imagine 1K \u2014 ~$0.05/img",               "x-ai/grok-imagine-image-quality",         "openrouter"),
-             ("Gemini 3.1 Flash Image \u2014 ~$0.07/img",       "google/gemini-3.1-flash-image",            "openrouter"),
-             ("Gemini 3 Pro Image \u2014 ~$0.14/img",           "google/gemini-3-pro-image",                "openrouter"),
-             ("Local SDXL Turbo \u2014 Free",                   "stabilityai/sdxl-turbo",                   "local")],
+            [("Gemini 3.1 Flash Lite \u2014 ~$0.035/img", "google/gemini-3.1-flash-lite-image", "openrouter"),
+             ("Grok Imagine 1K \u2014 ~$0.05/img",          "x-ai/grok-imagine-image-quality",     "openrouter"),
+             ("Gemini 3.1 Flash \u2014 ~$0.07/img",         "google/gemini-3.1-flash-image",       "openrouter"),
+             ("Gemini 3 Pro \u2014 ~$0.14/img",             "google/gemini-3-pro-image",           "openrouter"),
+             ("Local SDXL Turbo \u2014 Free",               "stabilityai/sdxl-turbo",              "local")],
             format_func=lambda x: x[0], index=0,
         )
 
     style = st.text_input(
-        "Image style",
+        "Style tag",
         value="A dark graphic novel illustration of [INSERT YOUR SCENE / CHARACTER HERE]. Gritty indie comic book art style, thick clean black ink outlines, digital cel-shading. Dramatic cinematic lighting with deep shadows and high contrast. The characters must have large, wide-open anxious eyes with tiny pinpoint pupils, expressing shock. Suspenseful true-crime storybook aesthetic, high quality, 9:16 vertical aspect ratio.",
-        label_visibility="collapsed",
+        label_visibility="collapsed", placeholder="Optional image style template...",
     )
 
     llm_provider = st.radio(
         "LLM Provider",
-        ["Ollama (local, free)", "DeepSeek (API, paid)", "OpenRouter (API, paid)"],
+        ["Ollama (local)", "DeepSeek (API)", "OpenRouter (API)"],
         horizontal=True,
     )
 
@@ -223,7 +268,7 @@ with tab_gen:
         img_cost = 0 if img_model[2] == "local" else estimate_image_cost(imgs, model_key)
         llm_cost = 0 if "Ollama" in llm_provider else estimate_llm_cost(result.get("_token_count", 0), "deepseek" if "DeepSeek" in llm_provider else "openrouter")
         st.code(format_estimate(img_cost, llm=llm_cost), language="text")
-        with st.expander("View script"):
+        with st.expander("View generated script"):
             st.write("**Narration:**")
             st.write(result["narration"])
             st.write("**Image prompts:**")

@@ -3,9 +3,9 @@ gatherUsageStats = false
 
 [theme]
 base = "dark"
-primaryColor = "#d4a574"
-backgroundColor = "#0c0c14"
-secondaryBackgroundColor = "#181822"
-textColor = "#e0dcd0"
+primaryColor = "#ff3333"
+backgroundColor = "#080808"
+secondaryBackgroundColor = "#121212"
+textColor = "#e8e4d8"
 font = "sans serif"
 

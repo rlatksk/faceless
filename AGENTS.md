@@ -39,7 +39,7 @@ Each run creates `output/YYYY-MM-DD_HHMMSS/final.mp4`.
 
 - **LLM providers**: Ollama (local, `llama3`), OpenRouter (`openai/gpt-4o-mini`)
 - **TTS**: Edge TTS only (`synthesize_edge`, `list_edge_voices`). Default voice "Microsoft Eric".
-- **Image providers**: OpenRouter (Nano Banana 2/Pro, $0.003-0.008/img), local SDXL/SDXL Turbo (free, slow on CPU)
+- **Image providers**: OpenRouter (Gemini 3.1 Flash Lite $0.035/img, Grok Imagine $0.05/img, Gemini 3.1 Flash $0.07/img, Gemini 3 Pro $0.14/img), local SDXL/SDXL Turbo (free, slow on CPU)
 - **Style input**: Template style with `[INSERT YOUR SCENE / CHARACTER HERE]` placeholder, falls back to `, {style} style`
 - **Cost estimate**: Runs LLM first (free for Ollama, ~$0.0002 for OpenRouter) to get image count, then shows image + LLM cost. Edge TTS is free.
 - **Edge TTS**: Uses `asyncio.run()` internally — `edge_tts.list_voices()` and `edge_tts.Communicate().save()` are async
