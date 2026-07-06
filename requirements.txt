@@ -1,0 +1,13 @@
+streamlit
+requests
+faster-whisper
+edge-tts
+diffusers
+transformers
+torch
+torchvision
+moviepy
+python-dotenv
+accelerate
+ruff
+pytest
