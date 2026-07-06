@@ -8,13 +8,14 @@ _pipe = None
 
 def generate_images(prompts, output_dir, model, provider="openrouter", progress_cb=None):
     if provider == "local":
-        return _generate_local(prompts, output_dir, model, progress_cb)
+        return _generate_local(prompts, output_dir, model, progress_cb) + (0.0,)
     return _generate_openrouter(prompts, output_dir, model, progress_cb)
 
 
 def _generate_openrouter(prompts, output_dir, model, progress_cb=None):
     api_key = os.environ["OPENROUTER_API_KEY"]
     paths = []
+    total_cost = 0.0
     for i, prompt in enumerate(prompts):
         path = os.path.join(output_dir, f"img_{i:03d}.png")
         if os.path.exists(path):
@@ -38,9 +39,10 @@ def _generate_openrouter(prompts, output_dir, model, progress_cb=None):
             with open(path, "wb") as f:
                 f.write(base64.b64decode(b64))
             paths.append(path)
+            total_cost += data.get("usage", {}).get("cost", 0)
         except requests.RequestException as e:
             raise RuntimeError(f"OpenRouter image gen failed for prompt {i}: {e}")
-    return paths
+    return paths, round(total_cost, 4)
 
 
 def _generate_local(prompts, output_dir, model, progress_cb=None):

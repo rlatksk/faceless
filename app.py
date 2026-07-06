@@ -18,6 +18,7 @@ from pipeline.cost import PRICES  # noqa: E402
 
 PROJECTS_DIR = "output"
 STEP_NAMES = ["audio", "transcribe", "images", "assemble"]
+DEFAULT_STYLE = "A dark graphic novel illustration of [INSERT YOUR SCENE / CHARACTER HERE]. Gritty indie comic book art style, thick clean black ink outlines, digital cel-shading. Dramatic cinematic lighting with deep shadows and high contrast. The characters must have large, wide-open anxious eyes with tiny pinpoint pupils, expressing shock. Suspenseful true-crime storybook aesthetic, high quality, 9:16 vertical aspect ratio."
 
 _CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Teko:wght@400;600;700&family=Inter:wght@400;500;600;700&display=swap');
@@ -236,7 +237,7 @@ tab_gen, tab_projects = st.tabs(["Generate", "Projects"])
 
 with tab_gen:
     source = st.text_area("Source script", height=140, label_visibility="collapsed",
-                          placeholder="Paste your story or script here...")
+                          placeholder="Paste your story or script here...", key="source_text")
 
     col1, col2 = st.columns(2)
     with col1:
@@ -263,9 +264,9 @@ with tab_gen:
         )
 
     style = st.text_input(
-        "Style tag",
-        value="A dark graphic novel illustration of [INSERT YOUR SCENE / CHARACTER HERE]. Gritty indie comic book art style, thick clean black ink outlines, digital cel-shading. Dramatic cinematic lighting with deep shadows and high contrast. The characters must have large, wide-open anxious eyes with tiny pinpoint pupils, expressing shock. Suspenseful true-crime storybook aesthetic, high quality, 9:16 vertical aspect ratio.",
+        "Style tag", value=DEFAULT_STYLE,
         label_visibility="collapsed", placeholder="Optional image style template...",
+        key="style_input",
     )
 
     llm_provider = st.radio(
@@ -307,6 +308,7 @@ with tab_gen:
         else:
             llm_key = "deepseek_llm" if "DeepSeek" in llm_provider else "openrouter_llm"
             llm_cost = round(tokens * PRICES[llm_key], 4)
+        st.session_state["_llm_cost"] = llm_cost
         total = img_cost + llm_cost
         lines = [f"Images .......................... ${img_cost:.2f}"]
         if llm_cost:
@@ -339,6 +341,7 @@ with tab_gen:
                 "image_prompts": prompts, "voice_id": voice_id,
                 "image_model": img_model[1], "image_model_label": img_model[0],
                 "image_style": style, "llm_provider": llm_provider,
+                "total_cost": st.session_state.get("_llm_cost", 0),
                 "steps": {s: {"status": "pending"} for s in ["script", "audio", "transcribe", "images", "assemble"]},
             }
             project["steps"]["script"] = {"status": "done"}
@@ -347,6 +350,11 @@ with tab_gen:
                 f.write(result["narration"] + "\n\n")
                 for p in prompts:
                     f.write(p + "\n")
+
+            st.session_state["source_text"] = ""
+            st.session_state["style_input"] = DEFAULT_STYLE
+            st.session_state["cost_estimated"] = False
+            st.session_state.pop("script_result", None)
 
             status = st.empty()
             bar = st.progress(0)
@@ -370,7 +378,8 @@ with tab_gen:
                     bar.progress(pct)
                     status.info(f"Image {i+1}/{n}")
 
-                images = generate_images(prompts, out_dir, img_model[1], provider=img_model[2], progress_cb=img_progress)
+                images, img_cost = generate_images(prompts, out_dir, img_model[1], provider=img_model[2], progress_cb=img_progress)
+                project["total_cost"] += img_cost
                 project["steps"]["images"] = {"status": "done"}
                 _save_project(out_dir, project)
                 bar.progress(80)
@@ -406,8 +415,9 @@ with tab_projects:
         done = sum(1 for s in STEP_NAMES if steps.get(s, {}).get("status") == "done")
         pct = int(done / len(STEP_NAMES) * 100)
         icon = {"completed": "\u2705", "failed": "\u274c", "in_progress": "\u23f3"}.get(proj.get("status"), "\u2753")
+        cost = proj.get("total_cost", 0)
 
-        with st.expander(f"**{icon} {pid}**  \u2014  {pct}% complete"):
+        with st.expander(f"**{icon} {pid}**  \u2014  {pct}%  \u2022  ${cost:.2f}"):
             col1, col2 = st.columns(2)
             with col1:
                 audio_path = f"{PROJECTS_DIR}/{pid}/audio.mp3"
@@ -457,7 +467,8 @@ with tab_projects:
                                 bar.progress(pct)
                                 status.info(f"Image {i+1}/{n}")
 
-                            images = generate_images(prompts, out_dir, proj["image_model"], provider="openrouter", progress_cb=img_progress)
+                            images, img_cost = generate_images(prompts, out_dir, proj["image_model"], provider="openrouter", progress_cb=img_progress)
+                            proj["total_cost"] = proj.get("total_cost", 0) + img_cost
                             steps["images"] = {"status": "done"}
                             _save_project(out_dir, proj)
                         else:
