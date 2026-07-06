@@ -198,14 +198,17 @@ def _backfill_project(path):
     pid = os.path.basename(path)
     steps = {s: {"status": "pending"} for s in STEP_NAMES}
     steps["script"] = {"status": "done"}
+    has_audio = os.path.exists(f"{path}/audio.mp3")
     imgs = sorted(glob.glob(f"{path}/img_*.png"))
-    if os.path.exists(f"{path}/audio.mp3"):
+    has_video = os.path.exists(f"{path}/final.mp4")
+    has_transcript = os.path.exists(f"{path}/transcript.json")
+    if has_audio:
         steps["audio"] = {"status": "done"}
-    if os.path.exists(f"{path}/transcript.json"):
+    if has_transcript or (has_audio and has_video):
         steps["transcribe"] = {"status": "done"}
     if imgs:
         steps["images"] = {"status": "done"}
-    if imgs and os.path.exists(f"{path}/audio.mp3") and os.path.exists(f"{path}/final.mp4"):
+    if has_video:
         steps["assemble"] = {"status": "done"}
     complete = all(steps[s]["status"] == "done" for s in STEP_NAMES)
     proj = {
