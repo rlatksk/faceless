@@ -16,6 +16,10 @@ def _generate_openrouter(prompts, output_dir, model, progress_cb=None):
     api_key = os.environ["OPENROUTER_API_KEY"]
     paths = []
     for i, prompt in enumerate(prompts):
+        path = os.path.join(output_dir, f"img_{i:03d}.png")
+        if os.path.exists(path):
+            paths.append(path)
+            continue
         if progress_cb:
             progress_cb(i, len(prompts), "Generating")
         try:
@@ -31,7 +35,6 @@ def _generate_openrouter(prompts, output_dir, model, progress_cb=None):
             if not images:
                 raise RuntimeError("No image in OpenRouter response")
             b64 = images[0]["b64_json"]
-            path = os.path.join(output_dir, f"img_{i:03d}.png")
             with open(path, "wb") as f:
                 f.write(base64.b64decode(b64))
             paths.append(path)
@@ -52,6 +55,10 @@ def _generate_local(prompts, output_dir, model, progress_cb=None):
 
     paths = []
     for i, prompt in enumerate(prompts):
+        path = os.path.join(output_dir, f"img_{i:03d}.png")
+        if os.path.exists(path):
+            paths.append(path)
+            continue
         if progress_cb:
             progress_cb(i, len(prompts), "Generating")
         try:
@@ -59,7 +66,6 @@ def _generate_local(prompts, output_dir, model, progress_cb=None):
             steps = 4 if turbo else 30
             guidance = 0.0 if turbo else 7.5
             images = _pipe(prompt=prompt, num_inference_steps=steps, guidance_scale=guidance).images
-            path = os.path.join(output_dir, f"img_{i:03d}.png")
             images[0].save(path)
             paths.append(path)
         except Exception as e:

@@ -1,4 +1,3 @@
-import os
 from moviepy import AudioFileClip, ImageClip, TextClip, ColorClip
 from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
 from moviepy.video.fx import Resize
@@ -44,19 +43,21 @@ def _segment_boundaries(timestamps, n_segments):
 def _make_subtitle_clips(timestamps, video_size):
     segments = _group_into_segments(timestamps)
     clips = []
-    bar_w = int(video_size[0] * 0.92)
-    bar_y = video_size[1] * 0.88
+    bar_w = int(video_size[0] * 0.94)
+    bar_y = int(video_size[1] * 0.84)
+    pad = 20
     for text, start, end in segments:
         dur = max(end - start, 0.3)
         txt = TextClip(
-            text=text.upper(), font=_FONT, font_size=80, color="white",
-            stroke_color="black", stroke_width=10,
+            text=text.upper(), font=_FONT, font_size=95, color="white",
+            stroke_color="black", stroke_width=8,
             method="caption", size=(bar_w, None),
         )
-        bar = ColorClip(size=(bar_w, txt.h + 24), color=(0, 0, 0)).with_opacity(0.6)
+        bar_h = txt.h + pad * 2
+        bar = ColorClip(size=(bar_w, bar_h), color=(0, 0, 0)).with_opacity(0.75)
         bar = bar.with_position(("center", bar_y)).with_start(start).with_duration(dur)
 
-        txt = txt.with_position(("center", bar_y)).with_start(start).with_duration(dur)
+        txt = txt.with_position(("center", bar_y + pad)).with_start(start).with_duration(dur)
         clips.extend([bar, txt])
     return clips
 
