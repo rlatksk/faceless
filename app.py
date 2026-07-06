@@ -291,16 +291,26 @@ with tab_gen:
         horizontal=True,
     )
 
-    if st.button("Estimate Cost", use_container_width=True) and source:
-        with st.spinner("Running LLM..."):
-            if "Ollama" in llm_provider:
-                provider, llm_model = "ollama", "llama3"
-            elif "DeepSeek" in llm_provider:
-                provider, llm_model = "deepseek", "deepseek-chat"
-            else:
-                provider, llm_model = "openrouter", "openai/gpt-4o-mini"
-            result = generate_script(source, provider=provider, model=llm_model)
-            st.session_state["script_result"] = result
+    # fingerprint of current inputs to detect changes
+    current_fp = {"source": source, "voice": voice_id, "img_model": img_model[1], "llm": llm_provider, "style": style}
+    inputs_changed = st.session_state.get("last_fp") != current_fp
+    has_estimate = st.session_state.get("script_result") is not None
+
+    if inputs_changed or not has_estimate:
+        if st.button("Estimate Cost", use_container_width=True) and source:
+            with st.spinner("Running LLM..."):
+                if "Ollama" in llm_provider:
+                    provider, llm_model = "ollama", "llama3"
+                elif "DeepSeek" in llm_provider:
+                    provider, llm_model = "deepseek", "deepseek-chat"
+                else:
+                    provider, llm_model = "openrouter", "openai/gpt-4o-mini"
+                result = generate_script(source, provider=provider, model=llm_model)
+                st.session_state["script_result"] = result
+                st.session_state["last_fp"] = current_fp
+                st.rerun()
+    else:
+        result = st.session_state["script_result"]
         imgs = len(result["image_prompts"])
         label = img_model[0]
         model_key = {"Lite": "openrouter_gemini_lite", "Pro": "openrouter_gemini_pro",
@@ -316,71 +326,74 @@ with tab_gen:
             st.write("**Image prompts:**")
             for i, p in enumerate(result["image_prompts"]):
                 st.write(f"{i+1}. {p}")
-        st.session_state["cost_estimated"] = True
 
-    if st.session_state.get("cost_estimated") and st.button("Generate Video", type="primary", use_container_width=True):
-        project_id = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-        out_dir = f"{PROJECTS_DIR}/{project_id}"
-        os.makedirs(out_dir, exist_ok=True)
-        result = st.session_state["script_result"]
+        if st.button("Generate Video", type="primary", use_container_width=True):
+            project_id = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+            out_dir = f"{PROJECTS_DIR}/{project_id}"
+            os.makedirs(out_dir, exist_ok=True)
+            result = st.session_state["script_result"]
 
-        prompts = result["image_prompts"]
-        if style and "[INSERT" in style:
-            prompts = [style.replace("[INSERT YOUR SCENE / CHARACTER HERE]", p) for p in prompts]
-        elif style:
-            prompts = [f"{p}, {style} style" for p in prompts]
+            prompts = result["image_prompts"]
+            if style and "[INSERT" in style:
+                prompts = [style.replace("[INSERT YOUR SCENE / CHARACTER HERE]", p) for p in prompts]
+            elif style:
+                prompts = [f"{p}, {style} style" for p in prompts]
 
-        project = {
-            "id": project_id, "status": "in_progress", "created": datetime.now().isoformat(),
-            "source_text": source, "narration": result["narration"],
-            "image_prompts": prompts, "voice_id": voice_id,
-            "image_model": img_model[1], "image_model_label": img_model[0],
-            "image_style": style, "llm_provider": llm_provider,
-            "steps": {s: {"status": "pending"} for s in ["script", "audio", "transcribe", "images", "assemble"]},
-        }
-        project["steps"]["script"] = {"status": "done"}
-        _save_project(out_dir, project)
-
-        status = st.empty()
-        bar = st.progress(0)
-
-        try:
-            status.info("Generating audio...")
-            synthesize_edge(result["narration"], voice_id, f"{out_dir}/audio.mp3")
-            project["steps"]["audio"] = {"status": "done"}
+            project = {
+                "id": project_id, "status": "in_progress", "created": datetime.now().isoformat(),
+                "source_text": source, "narration": result["narration"],
+                "image_prompts": prompts, "voice_id": voice_id,
+                "image_model": img_model[1], "image_model_label": img_model[0],
+                "image_style": style, "llm_provider": llm_provider,
+                "steps": {s: {"status": "pending"} for s in ["script", "audio", "transcribe", "images", "assemble"]},
+            }
+            project["steps"]["script"] = {"status": "done"}
             _save_project(out_dir, project)
-            bar.progress(20)
+            with open(f"{out_dir}/script.txt", "w") as f:
+                f.write(result["narration"] + "\n\n")
+                for p in prompts:
+                    f.write(p + "\n")
 
-            status.info("Transcribing audio...")
-            words = transcribe(f"{out_dir}/audio.mp3")
-            json.dump(words, open(f"{out_dir}/transcript.json", "w"))
-            project["steps"]["transcribe"] = {"status": "done"}
-            _save_project(out_dir, project)
-            bar.progress(35)
+            status = st.empty()
+            bar = st.progress(0)
 
-            def img_progress(i, n, action):
-                pct = 35 + 45 * (i + 1) // n
-                bar.progress(pct)
-                status.info(f"Image {i+1}/{n}")
+            try:
+                status.info("Generating audio...")
+                synthesize_edge(result["narration"], voice_id, f"{out_dir}/audio.mp3")
+                project["steps"]["audio"] = {"status": "done"}
+                _save_project(out_dir, project)
+                bar.progress(20)
 
-            images = generate_images(prompts, out_dir, img_model[1], provider=img_model[2], progress_cb=img_progress)
-            project["steps"]["images"] = {"status": "done"}
-            _save_project(out_dir, project)
-            bar.progress(80)
+                status.info("Transcribing audio...")
+                words = transcribe(f"{out_dir}/audio.mp3")
+                json.dump(words, open(f"{out_dir}/transcript.json", "w"))
+                project["steps"]["transcribe"] = {"status": "done"}
+                _save_project(out_dir, project)
+                bar.progress(35)
 
-            status.info("Assembling video...")
-            assemble(images, f"{out_dir}/audio.mp3", words, f"{out_dir}/final.mp4")
-            project["steps"]["assemble"] = {"status": "done"}
-            project["status"] = "completed"
-            _save_project(out_dir, project)
-            bar.progress(100)
-            status.success("Done!")
-            st.video(f"{out_dir}/final.mp4")
-        except Exception as e:
-            project["status"] = "failed"
-            _save_project(out_dir, project)
-            st.error(f"Pipeline failed: {e}")
-            st.info("Go to the Projects tab to resume.")
+                def img_progress(i, n, action):
+                    pct = 35 + 45 * (i + 1) // n
+                    bar.progress(pct)
+                    status.info(f"Image {i+1}/{n}")
+
+                images = generate_images(prompts, out_dir, img_model[1], provider=img_model[2], progress_cb=img_progress)
+                project["steps"]["images"] = {"status": "done"}
+                _save_project(out_dir, project)
+                bar.progress(80)
+
+                status.info("Assembling video...")
+                assemble(images, f"{out_dir}/audio.mp3", words, f"{out_dir}/final.mp4")
+                project["steps"]["assemble"] = {"status": "done"}
+                project["status"] = "completed"
+                _save_project(out_dir, project)
+                bar.progress(100)
+                status.success("Done!")
+                st.video(f"{out_dir}/final.mp4")
+            except Exception as e:
+                project["status"] = "failed"
+                _save_project(out_dir, project)
+                st.error(f"Pipeline failed: {e}")
+                st.info("Go to the Projects tab to resume.")
 
 with tab_projects:
     dirs = sorted([
