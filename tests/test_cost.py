@@ -16,6 +16,11 @@ def test_image_cost_gemini_pro():
     assert cost == 1.4
 
 
+def test_image_cost_grok():
+    cost = estimate_image_cost(10, "openrouter_grok_imagine")
+    assert cost == 0.5
+
+
 def test_image_cost_unknown():
     try:
         estimate_image_cost(1, "fake")
