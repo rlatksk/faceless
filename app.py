@@ -181,6 +181,51 @@ div[role="alert"] {
 .stSpinner {
     color: #ff2b2b;
 }
+
+/* settings popover */
+div[data-testid="stPopover"] > div[data-testid="stButton"] > button {
+    background: transparent;
+    border: 1px solid #333;
+    color: #888;
+    font-size: 0.8rem;
+    font-family: 'Inter', sans-serif;
+    border-radius: 2px;
+    padding: 0.25rem 0.75rem;
+}
+div[data-testid="stPopover"] > div[data-testid="stButton"] > button:hover {
+    border-color: #ff2b2b;
+    color: #ff2b2b;
+}
+div[data-testid="stPopoverBody"] {
+    background: #0a0a0a;
+    border: 1px solid #1a1a1a;
+    border-radius: 2px;
+    min-width: 280px;
+}
+div[data-testid="stPopoverBody"] a {
+    color: #ff2b2b;
+    text-decoration: none;
+    font-family: 'Inter', sans-serif;
+    font-size: 0.85rem;
+}
+div[data-testid="stPopoverBody"] a:hover {
+    color: #cc0000;
+}
+div[data-testid="stPopoverBody"] h5 {
+    font-family: 'Teko', sans-serif;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 0.25rem;
+}
+div[data-testid="stPopoverBody"] hr {
+    border-color: #1a1a1a;
+    margin: 0.5rem 0;
+}
+div[data-testid="stPopoverBody"] .stCaption {
+    color: #555;
+    font-size: 0.75rem;
+}
 """
 
 
@@ -197,7 +242,12 @@ def _load_or_backfill(path):
         steps["audio"] = {"status": "done"}
     if os.path.exists(f"{path}/transcript.json") or (os.path.exists(f"{path}/audio.mp3") and os.path.exists(f"{path}/final.mp4")):
         steps["transcribe"] = {"status": "done"}
-    if sorted(glob.glob(f"{path}/img_*.png")):
+    existing = sorted(glob.glob(f"{path}/img_*.png"))
+    if os.path.exists(f"{path}/project.json"):
+        expected = len(json.load(open(f"{path}/project.json")).get("image_prompts", []))
+        if len(existing) >= expected > 0:
+            steps["images"] = {"status": "done"}
+    elif existing:
         steps["images"] = {"status": "done"}
     if os.path.exists(f"{path}/final.mp4"):
         steps["assemble"] = {"status": "done"}
@@ -222,13 +272,30 @@ def _load_or_backfill(path):
 st.set_page_config(page_title="Faceless", layout="centered")
 st.markdown(f"<style>{_CSS}</style>", unsafe_allow_html=True)
 
-st.markdown(
-    '<h1 style="margin-bottom:0">FACELESS</h1>'
-    '<p style="font-family:Inter,sans-serif;font-size:0.75rem;color:#555;'
-    'letter-spacing:0.15em;text-transform:uppercase;margin-top:-0.25rem">'
-    'vertical video generator</p>',
-    unsafe_allow_html=True,
-)
+col_h, col_s = st.columns([3, 1])
+with col_h:
+    st.markdown(
+        '<h1 style="margin-bottom:0">FACELESS</h1>'
+        '<p style="font-family:Inter,sans-serif;font-size:0.75rem;color:#555;'
+        'letter-spacing:0.15em;text-transform:uppercase;margin-top:-0.25rem">'
+        'vertical video generator</p>',
+        unsafe_allow_html=True,
+    )
+with col_s:
+    with st.popover("\u2699 Settings"):
+        st.markdown("##### API Keys")
+        st.markdown("[OpenRouter](https://openrouter.ai/keys)")
+        st.markdown("[DeepSeek](https://platform.deepseek.com/api_keys)")
+        st.divider()
+        st.markdown("##### Image Models")
+        st.caption("Extra OpenRouter model IDs (one per line)")
+        st.text_area("custom image models", placeholder="black-forest-labs/flux-1.1-pro\n...",
+                     label_visibility="collapsed", key="_settings_img_models")
+        st.divider()
+        st.markdown("##### LLM Models")
+        st.text_input("Ollama", value="llama3", key="_settings_ollama")
+        st.text_input("DeepSeek", value="deepseek-v4-flash", key="_settings_deepseek")
+        st.text_input("OpenRouter", value="openai/gpt-4o-mini", key="_settings_openrouter_llm")
 
 if not os.getenv("OPENROUTER_API_KEY"):
     st.warning("OPENROUTER_API_KEY not set in .env")
@@ -236,6 +303,12 @@ if not os.getenv("OPENROUTER_API_KEY"):
 tab_gen, tab_projects = st.tabs(["Generate", "Projects"])
 
 with tab_gen:
+    if st.session_state.pop("_clear_source", False):
+        st.session_state["source_text"] = ""
+    if st.session_state.pop("_clear_style", False):
+        st.session_state["style_custom"] = ""
+    if st.session_state.pop("_clear_estimate", False):
+        st.session_state.pop("script_result", None)
     source = st.text_area("Source script", height=140, label_visibility="collapsed",
                           placeholder="Paste your story or script here...", key="source_text")
 
@@ -253,15 +326,20 @@ with tab_gen:
             voice_id = "en-US-EricNeural"
 
     with col2:
-        img_model = st.selectbox(
-            "Image Model",
-            [("Gemini 3.1 Flash Lite \u2014 ~$0.035/img", "google/gemini-3.1-flash-lite-image", "openrouter"),
-             ("Grok Imagine 1K \u2014 ~$0.05/img",          "x-ai/grok-imagine-image-quality",     "openrouter"),
-             ("Gemini 3.1 Flash \u2014 ~$0.07/img",         "google/gemini-3.1-flash-image",       "openrouter"),
-             ("Gemini 3 Pro \u2014 ~$0.14/img",             "google/gemini-3-pro-image",           "openrouter"),
-             ("Local SDXL Turbo \u2014 Free",               "stabilityai/sdxl-turbo",              "local")],
-            format_func=lambda x: x[0], index=0,
-        )
+        _img_models = [
+            ("Gemini 3.1 Flash Lite \u2014 ~$0.035/img", "google/gemini-3.1-flash-lite-image", "openrouter"),
+            ("Grok Imagine 1K \u2014 ~$0.05/img",          "x-ai/grok-imagine-image-quality",     "openrouter"),
+            ("Gemini 3.1 Flash \u2014 ~$0.07/img",         "google/gemini-3.1-flash-image",       "openrouter"),
+            ("Gemini 3 Pro \u2014 ~$0.14/img",             "google/gemini-3-pro-image",           "openrouter"),
+            ("Local SDXL Turbo \u2014 Free",               "stabilityai/sdxl-turbo",              "local"),
+        ]
+        _custom_raw = st.session_state.get("_settings_img_models", "")
+        if _custom_raw:
+            for _line in _custom_raw.strip().split("\n"):
+                _line = _line.strip()
+                if _line:
+                    _img_models.append((_line, _line, "openrouter"))
+        img_model = st.selectbox("Image Model", _img_models, format_func=lambda x: x[0], index=0)
 
     style_preset = st.selectbox("Style", ["Indie Dark Comic", "Custom"], label_visibility="collapsed")
     if style_preset == "Custom":
@@ -272,12 +350,12 @@ with tab_gen:
 
     llm_provider = st.radio(
         "LLM Provider",
-        ["Ollama (local)", "DeepSeek (API)", "OpenRouter (API)"],
+        ["DeepSeek (API)", "Ollama (local)", "OpenRouter (API)"],
         horizontal=True,
     )
 
     # fingerprint of current inputs to detect changes
-    current_fp = {"source": source, "voice": voice_id, "img_model": img_model[1], "llm": llm_provider, "preset": style_preset, "custom_style": style if style_preset == "Custom" else ""}
+    current_fp = {"source": source, "voice": voice_id, "img_model": img_model[1], "llm": llm_provider, "preset": style_preset, "custom_style": style if style_preset == "Custom" else "", "settings_fp": st.session_state.get("_settings_img_models", "") + st.session_state.get("_settings_ollama", "") + st.session_state.get("_settings_deepseek", "") + st.session_state.get("_settings_openrouter_llm", "")}
     inputs_changed = st.session_state.get("last_fp") != current_fp
     has_estimate = st.session_state.get("script_result") is not None
 
@@ -285,11 +363,11 @@ with tab_gen:
         if st.button("Estimate Cost", use_container_width=True) and source:
             with st.spinner("Running LLM..."):
                 if "Ollama" in llm_provider:
-                    provider, llm_model = "ollama", "llama3"
+                    provider, llm_model = "ollama", st.session_state.get("_settings_ollama") or "llama3"
                 elif "DeepSeek" in llm_provider:
-                    provider, llm_model = "deepseek", "deepseek-chat"
+                    provider, llm_model = "deepseek", st.session_state.get("_settings_deepseek") or "deepseek-v4-flash"
                 else:
-                    provider, llm_model = "openrouter", "openai/gpt-4o-mini"
+                    provider, llm_model = "openrouter", st.session_state.get("_settings_openrouter_llm") or "openai/gpt-4o-mini"
                 result = generate_script(source, provider=provider, model=llm_model)
                 st.session_state["script_result"] = result
                 st.session_state["last_fp"] = current_fp
@@ -298,11 +376,17 @@ with tab_gen:
         result = st.session_state["script_result"]
         imgs = len(result["image_prompts"])
         label = img_model[0]
-        model_key = {"Lite": "openrouter_gemini_lite", "Pro": "openrouter_gemini_pro",
-                     "Grok": "openrouter_grok_imagine"}.get(
-            next((k for k in ["Lite", "Pro", "Grok"] if k in label), ""), "openrouter_gemini_flash"
-        )
-        img_cost = 0 if img_model[2] == "local" else round(imgs * PRICES[model_key], 4)
+        _default_ids = {"google/gemini-3.1-flash-lite-image", "x-ai/grok-imagine-image-quality", "google/gemini-3.1-flash-image", "google/gemini-3-pro-image", "stabilityai/sdxl-turbo"}
+        if img_model[1] not in _default_ids:
+            img_cost = round(imgs * PRICES["openrouter_gemini_flash"], 4)
+            cost_note = " (est.)"
+        else:
+            model_key = {"Lite": "openrouter_gemini_lite", "Pro": "openrouter_gemini_pro",
+                         "Grok": "openrouter_grok_imagine"}.get(
+                next((k for k in ["Lite", "Pro", "Grok"] if k in label), ""), "openrouter_gemini_flash"
+            )
+            img_cost = 0 if img_model[2] == "local" else round(imgs * PRICES[model_key], 4)
+            cost_note = ""
         tokens = result.get("_token_count", 0)
         if "Ollama" in llm_provider:
             llm_cost = 0
@@ -311,7 +395,7 @@ with tab_gen:
             llm_cost = round(tokens * PRICES[llm_key], 4)
         st.session_state["_llm_cost"] = llm_cost
         total = img_cost + llm_cost
-        lines = [f"Images .......................... ${img_cost:.2f}"]
+        lines = [f"Images .......................... ${img_cost:.2f}{cost_note}"]
         if llm_cost:
             lines.append(f"LLM ............................. ${llm_cost:.2f}")
         lines.append("-" * 40)
@@ -350,13 +434,12 @@ with tab_gen:
             _save_project(out_dir, project)
             with open(f"{out_dir}/script.txt", "w") as f:
                 f.write(result["narration"] + "\n\n")
-                for p in prompts:
-                    f.write(p + "\n")
+                for i, p in enumerate(prompts, 1):
+                    f.write(f"{i}. {p}\n")
 
-            st.session_state["source_text"] = ""
-            st.session_state["style_custom"] = ""
-            st.session_state["cost_estimated"] = False
-            st.session_state.pop("script_result", None)
+            st.session_state["_clear_source"] = True
+            st.session_state["_clear_style"] = True
+            st.session_state["_clear_estimate"] = True
 
             status = st.empty()
             bar = st.progress(0)
@@ -381,6 +464,8 @@ with tab_gen:
                     status.info(f"Image {i+1}/{n}")
 
                 images, img_cost = generate_images(prompts, out_dir, img_model[1], provider=img_model[2], progress_cb=img_progress)
+                if len(images) != len(prompts):
+                    raise RuntimeError(f"Only {len(images)}/{len(prompts)} images generated. Check the image model.")
                 project["total_cost"] += img_cost
                 project["steps"]["images"] = {"status": "done"}
                 _save_project(out_dir, project)
@@ -471,6 +556,8 @@ with tab_projects:
                                 status.info(f"Image {i+1}/{n}")
 
                             images, img_cost = generate_images(prompts, out_dir, proj["image_model"], provider="openrouter", progress_cb=img_progress)
+                            if len(images) != len(prompts):
+                                raise RuntimeError(f"Only {len(images)}/{len(prompts)} images generated. Check the image model.")
                             proj["total_cost"] = proj.get("total_cost", 0) + img_cost
                             steps["images"] = {"status": "done"}
                             _save_project(out_dir, proj)
