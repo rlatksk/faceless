@@ -1,6 +1,9 @@
+import os
 from moviepy import AudioFileClip, ImageClip, TextClip, ColorClip
 from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
 from moviepy.video.fx import Resize
+
+_FONT = "C:/Windows/Fonts/Arial.ttf"
 
 
 def assemble(image_paths, audio_path, timestamps, output_path, fps=24):
@@ -46,22 +49,14 @@ def _make_subtitle_clips(timestamps, video_size):
     for text, start, end in segments:
         dur = max(end - start, 0.3)
         txt = TextClip(
-            text=text.upper(), font="Arial", font_size=80, color="white",
+            text=text.upper(), font=_FONT, font_size=80, color="white",
             stroke_color="black", stroke_width=10,
             method="caption", size=(bar_w, None),
         )
         bar = ColorClip(size=(bar_w, txt.h + 24), color=(0, 0, 0)).with_opacity(0.6)
         bar = bar.with_position(("center", bar_y)).with_start(start).with_duration(dur)
 
-        def bounce(t):
-            if t < 0.1:
-                return 1.1 * t / 0.1
-            if t < 0.15:
-                return 1.1 - 0.1 * (t - 0.1) / 0.05
-            return 1.0
-
         txt = txt.with_position(("center", bar_y)).with_start(start).with_duration(dur)
-        txt = txt.resize(lambda t: bounce(t))
         clips.extend([bar, txt])
     return clips
 
