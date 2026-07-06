@@ -325,6 +325,7 @@ with tab_gen:
                 st.write(f"{i+1}. {p}")
 
         if st.button("Generate Video", type="primary", use_container_width=True):
+            st.toast("Generating video...")
             project_id = datetime.now().strftime("%Y-%m-%d_%H%M%S")
             out_dir = f"{PROJECTS_DIR}/{project_id}"
             os.makedirs(out_dir, exist_ok=True)
@@ -391,6 +392,7 @@ with tab_gen:
                 project["status"] = "completed"
                 _save_project(out_dir, project)
                 bar.progress(100)
+                st.toast("Video ready!")
                 status.success("Done!")
                 st.video(f"{out_dir}/final.mp4")
             except Exception as e:
@@ -483,6 +485,7 @@ with tab_projects:
                             proj["status"] = "completed"
                             _save_project(out_dir, proj)
                         bar.progress(100)
+                        st.toast("Video ready!")
                         st.success("Resumed! Video saved.")
                     except Exception as e:
                         proj["status"] = "failed"
