@@ -263,11 +263,12 @@ with tab_gen:
             format_func=lambda x: x[0], index=0,
         )
 
-    style = st.text_input(
-        "Style tag", value=DEFAULT_STYLE,
-        label_visibility="collapsed", placeholder="Optional image style template...",
-        key="style_input",
-    )
+    style_preset = st.selectbox("Style", ["Indie Dark Comic", "Custom"], label_visibility="collapsed")
+    if style_preset == "Custom":
+        style = st.text_input("Style tag", value="", label_visibility="collapsed",
+                              placeholder="Describe your custom style...", key="style_custom")
+    else:
+        style = DEFAULT_STYLE
 
     llm_provider = st.radio(
         "LLM Provider",
@@ -276,7 +277,7 @@ with tab_gen:
     )
 
     # fingerprint of current inputs to detect changes
-    current_fp = {"source": source, "voice": voice_id, "img_model": img_model[1], "llm": llm_provider, "style": style}
+    current_fp = {"source": source, "voice": voice_id, "img_model": img_model[1], "llm": llm_provider, "preset": style_preset, "custom_style": style if style_preset == "Custom" else ""}
     inputs_changed = st.session_state.get("last_fp") != current_fp
     has_estimate = st.session_state.get("script_result") is not None
 
@@ -352,7 +353,7 @@ with tab_gen:
                     f.write(p + "\n")
 
             st.session_state["source_text"] = ""
-            st.session_state["style_input"] = DEFAULT_STYLE
+            st.session_state["style_custom"] = ""
             st.session_state["cost_estimated"] = False
             st.session_state.pop("script_result", None)
 
