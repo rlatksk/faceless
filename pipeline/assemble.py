@@ -1,8 +1,11 @@
 import math
+import os
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from moviepy import AudioFileClip, ImageClip
+from moviepy.audio.AudioClip import CompositeAudioClip
+from moviepy.audio.fx import AudioFadeOut, AudioLoop
 from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
 from moviepy.video.fx import Resize
 
@@ -13,12 +16,25 @@ _SUB_Y_RATIO = 0.72
 _HIGHLIGHT_DUR = 0.35
 _HIGHLIGHT_COLOR = "#ffcc00"
 
+MUSIC_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "music")
 
-def assemble(image_paths, audio_path, timestamps, output_path, fps=24):
+# Ducking envelope. Speech pulls the bed down by _DUCK_DB; the ramps are what
+# stop that from being audible as pumping.
+_DUCK_DB = -18.0
+_DUCK_ATTACK = 0.05
+_DUCK_RELEASE = 0.35
+_MUSIC_FADE_OUT = 2.0
+_MUSIC_ENV_FPS = 100.0
+
+
+def assemble(image_paths, audio_path, timestamps, output_path, fps=24,
+             music_path=None, music_volume=0.15):
     if not image_paths:
         raise ValueError("No images to assemble — image step may need to be rerun")
     timestamps = [t for t in timestamps if t["word"].strip()]
     audio = AudioFileClip(audio_path)
+    if music_path:
+        audio = _mix_music(audio, music_path, timestamps, music_volume)
     seg_starts = _segment_boundaries(timestamps, len(image_paths))
 
     clips = []
@@ -60,6 +76,62 @@ def assemble(image_paths, audio_path, timestamps, output_path, fps=24):
         for ci, c in enumerate(subs):
             print(f"  sub_clip[{ci}]: start={c.start:.3f} dur={c.duration:.3f} size={c.size if hasattr(c, 'size') else '?'}", file=_sys.stderr)
         raise RuntimeError(f"Video assembly failed: {e}")
+
+
+def _mix_music(narration, music_path, timestamps, volume):
+    """Return the narration with a ducked music bed mixed under it.
+
+    The bed is looped to the narration length, faded out, then multiplied by a
+    gain envelope built from the word timestamps: `volume` during pauses, down
+    by `_DUCK_DB` while any word is being spoken. Envelope ramps are applied
+    before mixing so the result cannot clip at a ramp edge.
+    """
+    if not os.path.exists(music_path):
+        raise FileNotFoundError(f"Music track not found: {music_path}")
+    bed = AudioFileClip(music_path).with_effects([
+        AudioLoop(duration=narration.duration),
+        AudioFadeOut(_MUSIC_FADE_OUT),
+    ])
+    env = _duck_envelope(timestamps, narration.duration)
+
+    def ducked(get_frame, t):
+        frame = get_frame(t)
+        idx = np.minimum((np.asarray(t) * _MUSIC_ENV_FPS).astype(int), len(env) - 1)
+        gain = env[idx]
+        return frame * (gain[:, None] if frame.ndim > 1 else gain)
+
+    bed = bed.transform(ducked, keep_duration=True)
+    return CompositeAudioClip([narration, bed.with_volume_scaled(volume)])
+
+
+def _duck_envelope(timestamps, duration):
+    """Per-sample gain multiplier: 1.0 in pauses, `_DUCK_DB` under speech."""
+    n = max(int(duration * _MUSIC_ENV_FPS) + 1, 2)
+    target = np.ones(n)
+    for t in timestamps:
+        s = max(int(t["start"] * _MUSIC_ENV_FPS), 0)
+        e = min(int(t["end"] * _MUSIC_ENV_FPS) + 1, n)
+        if e > s:
+            target[s:e] = 10 ** (_DUCK_DB / 20)
+    return _ramp(target, _DUCK_ATTACK, _DUCK_RELEASE)
+
+
+def _ramp(target, attack, release):
+    """Smooth a step envelope into an asymmetric ducking envelope.
+
+    One pass: the gain follows the target down quickly (`attack`, so speech
+    ducks immediately) and returns up slowly (`release`, so the bed does not
+    pump in the gaps between words).
+    """
+    a = max(1.0 - 1.0 / (attack * _MUSIC_ENV_FPS), 0.0)
+    r = max(1.0 - 1.0 / (release * _MUSIC_ENV_FPS), 0.0)
+    out = np.empty_like(target)
+    acc = target[0]
+    for i, v in enumerate(target):
+        coeff = a if v < acc else r
+        acc = coeff * acc + (1 - coeff) * v
+        out[i] = acc
+    return out
 
 
 def _segment_boundaries(timestamps, n_segments):
