@@ -425,6 +425,12 @@ def _run_pipeline(project, out_dir, status, bar, stages):
     else:
         if not prompts:
             raise RuntimeError("This project has no image prompts to generate from.")
+        # A project can be marked "images: done" with nothing on disk — a stage that
+        # failed after the provider was paid leaves exactly that state. Say so before
+        # spending again, rather than silently re-buying every image.
+        if have:
+            status.warning(f"Only {len(have)} of {len(prompts)} images are on disk. "
+                           f"The rest will be generated again and charged again.")
         status.info("Generating images...")
 
         def img_progress(i, n, action):
@@ -592,7 +598,12 @@ with tab_create:
             lock_character = st.toggle("Lock character (same seed every image)")
             if lock_character:
                 seed = st.session_state.setdefault("_seed", int.from_bytes(os.urandom(4), "big"))
-                st.caption(f"Seed {seed} — reuse it to reproduce the same cast.")
+                if img_model[2] == "kenari":
+                    st.caption(f"Seed {seed} — but Kenari's image models ignore seeds, so this "
+                               f"changes nothing. Character consistency comes from the script's "
+                               f"character sheet instead.")
+                else:
+                    st.caption(f"Seed {seed} — reuse it to reproduce the same cast.")
             else:
                 seed = None
 
@@ -665,6 +676,11 @@ with tab_create:
             out_dir = f"{PROJECTS_DIR}/{project_id}"
             os.makedirs(out_dir, exist_ok=True)
 
+            cast = "\n".join(
+                f"{c['name']}: {c['description']}"
+                for c in result.get("characters", []) if c.get("name") and c.get("description")
+            )
+
             prompts = result["image_prompts"]
             if style and "[INSERT" in style:
                 # Scene prompts usually end in a period, and the template already
@@ -673,6 +689,10 @@ with tab_create:
                                          p.strip().rstrip(".")) for p in prompts]
             elif style:
                 prompts = [f"{p}, {style} style" for p in prompts]
+            # Restate the fixed character specs on every prompt. Image models have no
+            # memory between requests, so this is what actually keeps a character
+            # consistent — a seed only helps when the provider honours one.
+            prompts = [f"{cast}\n\nScene: {p}" for p in prompts] if cast else prompts
 
             project = {
                 "id": project_id, "status": "in_progress", "created": datetime.now().isoformat(),
