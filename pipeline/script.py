@@ -11,6 +11,12 @@ Source: {source_text}
 
 Return JSON: {{"narration": "voiceover text", "image_prompts": ["prompt1", "prompt2", ...]}}
 Each image_prompt describes one scene for AI image generation.
+
+Describe only what is IN the scene: the subjects, their expressions and body language, the
+setting, and the action. Do not name an art style, medium, rendering technique, lighting
+setup, camera lens, or image quality — those are applied separately and will conflict.
+Write each prompt as a single plain descriptive sentence.
+
 Keep narration under 500 words. Generate at most 10 image prompts (one per sentence or scene change)."""
 
     if provider == "ollama":

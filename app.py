@@ -25,7 +25,25 @@ STAGE_LABELS = [
     ("images", "Images"),
     ("assemble", "Render"),
 ]
-DEFAULT_STYLE = "A dark graphic novel illustration of [INSERT YOUR SCENE / CHARACTER HERE]. Gritty indie comic book art style, thick clean black ink outlines, digital cel-shading. Dramatic cinematic lighting with deep shadows and high contrast. The characters must have large, wide-open anxious eyes with tiny pinpoint pupils, expressing shock. Suspenseful true-crime storybook aesthetic, high quality, 9:16 vertical aspect ratio."
+STYLE_PRESETS = {
+    "Indie Dark Comic — horror, true crime": (
+        "A dark graphic novel illustration of [INSERT YOUR SCENE / CHARACTER HERE]. "
+        "Gritty indie comic book art, thick clean black ink outlines, digital cel-shading, "
+        "heavy chiaroscuro shadow and deep crushed blacks. Muted desaturated palette of cold "
+        "blues, sickly greens and dried-blood reds. Character design signature: large eyes with "
+        "tiny pinpoint pupils, drawn tight with whatever the scene demands — dread, suspicion, "
+        "grief or sudden shock. Cinematic vertical framing, high contrast, subtle film grain, "
+        "high quality."
+    ),
+    "AITA Storytime — drama, advice": (
+        "A bright flat-vector cartoon illustration of [INSERT YOUR SCENE / CHARACTER HERE]. "
+        "Modern YouTube storytime animation style, bold clean outlines, flat saturated colour "
+        "fills, simple geometric shapes, no gradients. Warm everyday palette of coral, teal, "
+        "mustard and cream. Characters are stylised with exaggerated expressive faces and clear "
+        "body language — smug, furious, sheepish or tearful as the moment calls for. Simple "
+        "uncluttered backgrounds, soft even lighting, vertical framing, high quality."
+    ),
+}
 
 DEFAULT_MODELS = {
     "ollama": "llama3",
@@ -560,12 +578,12 @@ with tab_create:
                 st.error(f"Could not load voices: {e}")
                 voice_id = "en-US-EricNeural"
 
-            style_preset = st.selectbox("Style", ["Indie Dark Comic", "Custom"])
+            style_preset = st.selectbox("Style", [*STYLE_PRESETS, "Custom"])
             if style_preset == "Custom":
                 style = st.text_input("Custom style tag", value="",
                                       placeholder="Describe your custom style...", key="style_custom")
             else:
-                style = DEFAULT_STYLE
+                style = STYLE_PRESETS[style_preset]
         with c2:
             img_model = st.selectbox("Image model",
                                      _img_models(st.session_state.get("_settings_img_models")),
@@ -649,7 +667,10 @@ with tab_create:
 
             prompts = result["image_prompts"]
             if style and "[INSERT" in style:
-                prompts = [style.replace("[INSERT YOUR SCENE / CHARACTER HERE]", p) for p in prompts]
+                # Scene prompts usually end in a period, and the template already
+                # supplies one after the placeholder, so strip it to avoid "..".
+                prompts = [style.replace("[INSERT YOUR SCENE / CHARACTER HERE]",
+                                         p.strip().rstrip(".")) for p in prompts]
             elif style:
                 prompts = [f"{p}, {style} style" for p in prompts]
 

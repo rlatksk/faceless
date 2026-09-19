@@ -74,7 +74,7 @@ Launch from the repo root: `load_dotenv()` and `PROJECTS_DIR = "output"` are bot
 
 ## Code Conventions & Common Patterns
 
-**Style.** No type hints anywhere — match that; adding them to one module would be inconsistent. Plain module-level functions, no classes in `pipeline/`. Constants are `UPPER_SNAKE` at module top (`_FONT`, `_SUB_Y_RATIO`, `PROJECTS_DIR`, `DEFAULT_STYLE`); private helpers and private constants take a leading underscore (`_chat_script`, `_generate_local`, `_render_text`). `pipeline/__init__.py` is empty — import submodules directly, never re-export.
+**Style.** No type hints anywhere — match that; adding them to one module would be inconsistent. Plain module-level functions, no classes in `pipeline/`. Constants are `UPPER_SNAKE` at module top (`_FONT`, `_SUB_Y_RATIO`, `PROJECTS_DIR`, `STYLE_PRESETS`); private helpers and private constants take a leading underscore (`_chat_script`, `_generate_local`, `_render_text`). `pipeline/__init__.py` is empty — import submodules directly, never re-export.
 
 **Error handling.** Wrap third-party failures in `RuntimeError` with the cause interpolated: `raise RuntimeError(f"Edge TTS error: {e}")`. Use `ValueError` for bad local state (missing API key, empty image list). Catch narrowly where the failure mode is known (`requests.ConnectionError`, `json.JSONDecodeError`), broadly where it is not. User-facing text always says what to do — `"Cannot reach Ollama at http://localhost:11434. Is it running?"`.
 
@@ -92,7 +92,7 @@ Launch from the repo root: `load_dotenv()` and `PROJECTS_DIR = "output"` are bot
 
 | File | Why it matters |
 |---|---|
-| `app.py:19-21` | `PROJECTS_DIR`, `STEP_NAMES`, `DEFAULT_STYLE`. Note `STEP_NAMES` omits `"script"` while `project.json["steps"]` includes it — intentional, `script` is always `done`. |
+| `app.py:19-28` | `PROJECTS_DIR`, `STEP_NAMES`, `STAGE_LABELS`, `STYLE_PRESETS`. Note `STEP_NAMES` omits `"script"` while `project.json["steps"]` includes it — intentional, `script` is always `done`. |
 | `app.py:238-270` | `_load_or_backfill` — the resume brain. Change here affects every project render. |
 | `app.py:413-489` | Main run path: dir creation → 5 stages → failure handling. |
 | `app.py:529-597` | Resume path. Mirrors the run path but gates each stage on persisted status. |
