@@ -571,19 +571,19 @@ with tab_create:
                                      _img_models(st.session_state.get("_settings_img_models")),
                                      format_func=lambda x: x[0])
 
+            lock_character = st.toggle("Lock character (same seed every image)")
+            if lock_character:
+                seed = st.session_state.setdefault("_seed", int.from_bytes(os.urandom(4), "big"))
+                st.caption(f"Seed {seed} — reuse it to reproduce the same cast.")
+            else:
+                seed = None
+
             tracks = sorted(glob.glob(f"{MUSIC_DIR}/*.mp3")) if os.path.isdir(MUSIC_DIR) else []
             track_labels = ["Off"] + [os.path.basename(t) for t in tracks]
             track = st.selectbox("Music", track_labels)
             music_path = tracks[track_labels.index(track) - 1] if track != "Off" else None
             music_volume = st.slider("Music volume", 0.0, 1.0, 0.15, 0.01,
                                      disabled=music_path is None)
-
-        lock_character = st.toggle("Lock character (same seed every image)")
-        if lock_character:
-            seed = st.session_state.setdefault("_seed", int.from_bytes(os.urandom(4), "big"))
-            st.caption(f"Seed {seed} — reuse it to reproduce the same cast.")
-        else:
-            seed = None
 
         # --- estimate state -------------------------------------------------
         # Only the inputs that change the *script* invalidate the estimate. The
@@ -595,37 +595,40 @@ with tab_create:
 
         _section(4, "Cost and render",
                  "Estimating runs the script model once. Nothing else is charged until you render.")
-        est_col, act_col = st.columns([2, 1])
-        with est_col:
-            if result is None:
-                st.info("Not estimated yet. Estimating writes the narration and image prompts.")
-            else:
-                if stale:
-                    st.warning("Your inputs changed since this estimate, so the script is out of date.")
-                imgs = len(result["image_prompts"])
-                img_cost, llm_cost, note = _estimate_costs(
-                    img_model, imgs, llm_label, result.get("_token_count", 0))
-                m1, m2, m3 = st.columns(3)
-                m1.metric("Scenes", imgs)
-                m2.metric("Images", f"${img_cost:.2f}", help=note)
-                m3.metric("Script", "free" if not llm_cost else f"${llm_cost:.2f}")
-                st.caption(f"Estimated total **${img_cost + llm_cost:.2f}** · {note}")
-        with act_col:
-            if result is None or stale:
-                label = "Estimate script" if result is None else "Re-estimate script"
-                if st.button(label, type="primary", use_container_width=True) and source:
-                    with st.spinner("Running the script model..."):
-                        out = generate_script(source, provider=llm_provider, model=llm_model)
-                    st.session_state["script_result"] = out
-                    st.session_state["last_fp"] = fingerprint
-                    st.session_state["_llm_cost"] = _llm_cost_usd(
-                        llm_label, out.get("_token_count", 0))
-                    st.rerun()
-                if result is None and not source:
-                    st.caption("Add your story first.")
-            else:
+        if stale:
+            st.warning("Your story or script model changed, so this estimate is out of date.")
+        if result is None:
+            st.info("Not estimated yet. Estimating writes the narration and the image prompts.")
+        else:
+            imgs = len(result["image_prompts"])
+            img_cost, llm_cost, note = _estimate_costs(
+                img_model, imgs, llm_label, result.get("_token_count", 0))
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Scenes", imgs)
+            m2.metric("Images", f"${img_cost:.2f}", help=note)
+            m3.metric("Script", "free" if not llm_cost else f"${llm_cost:.2f}")
+            st.caption(f"Estimated total **${img_cost + llm_cost:.2f}** · {note}")
+
+        if result is None or stale:
+            label = "Estimate script" if result is None else "Re-estimate script"
+            clicked = st.button(label, type="primary", use_container_width=True,
+                                disabled=not source)
+            if not source:
+                st.caption("Add your story above to enable this.")
+            if clicked:
+                with st.spinner("Running the script model..."):
+                    out = generate_script(source, provider=llm_provider, model=llm_model)
+                st.session_state["script_result"] = out
+                st.session_state["last_fp"] = fingerprint
+                st.session_state["_llm_cost"] = _llm_cost_usd(
+                    llm_label, out.get("_token_count", 0))
+                st.rerun()
+        else:
+            b1, b2 = st.columns([3, 1])
+            with b1:
                 if st.button("Render video", type="primary", use_container_width=True):
                     st.session_state["_start_render"] = True
+            with b2:
                 if st.button("Re-estimate", use_container_width=True):
                     st.session_state.pop("script_result", None)
                     st.rerun()
