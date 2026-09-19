@@ -2,6 +2,7 @@ import glob
 import json
 import os
 import shutil
+import time
 from datetime import datetime
 
 from dotenv import load_dotenv
@@ -276,6 +277,22 @@ div[role="alert"] {
 .stage.active { border-color: #ff2b2b; color: #ff2b2b; }
 .stage.failed { border-color: #7a1f1f; color: #ff5555; }
 
+/* live progress panel */
+.prog-detail {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    font-family: 'Inter', sans-serif;
+    font-size: 0.78rem;
+    color: #888;
+    margin: -0.35rem 0 0.6rem;
+}
+.prog-time {
+    color: #555;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
 /* project gallery cards */
 .proj-title {
     font-family: 'Inter', sans-serif;
@@ -289,6 +306,84 @@ div[role="alert"] {
     font-size: 0.7rem;
     color: #666;
     margin-bottom: 0.35rem;
+}
+
+/* Equal-height gallery cards. Streamlit wraps each card in a layout wrapper that
+   sizes to its own content (flex: 0 1 auto), so a card with a short preview ends
+   far above its neighbours and the row bottom is ragged. The wrapper's parent is
+   the column's vertical block, which IS a flex container — that is where the
+   wrapper has to be told to grow. Each level down to the card must stretch, or
+   the card never fills the column.
+   `st.container(key=...)` gives each card a stable `st-key-projcard_<id>` class,
+   which is the only reliable hook. */
+div[data-testid="stHorizontalBlock"]:has([class*="st-key-projcard_"]) {
+    align-items: stretch;
+}
+div[data-testid="stVerticalBlock"]:has(> div[data-testid="stLayoutWrapper"] > [class*="st-key-projcard_"]) {
+    align-items: stretch;
+}
+div[data-testid="stLayoutWrapper"]:has(> [class*="st-key-projcard_"]) {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: stretch;
+}
+[class*="st-key-projcard_"] {
+    /* Streamlit's own rule sets `flex: 1 1 0%` on this element, and in flexbox
+       flex-basis wins over `height` — which is why a plain height was ignored and
+       rows came out ragged (480px beside 727px). Pin the basis instead, and stop
+       the parent's `align-items: stretch` from re-stretching it.
+       !important is needed: the competing rule is generated with equal specificity. */
+    flex: 0 0 505px !important;
+    align-self: flex-start;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid #1a1a1a;
+    border-radius: 2px;
+    background: #0a0a0a;
+    padding: 0.7rem;
+    box-sizing: border-box;
+}
+/* Reserve a fixed preview box so every card shows the same size image,
+   whether it has a video, a still, or nothing at all. Streamlit renders the
+   video as the <video> element itself, not a wrapper div. */
+[class*="st-key-projcard_"] video,
+[class*="st-key-projcard_"] img[data-testid="stImage"] {
+    width: 100%;
+    height: 250px;
+    object-fit: cover;
+    display: block;
+    border-radius: 2px;
+    background: #000;
+}
+[class*="st-key-projcard_"] div[data-testid="stElementContainer"]:has(video),
+[class*="st-key-projcard_"] div[data-testid="stElementContainer"]:has(img) {
+    height: 250px;
+    margin-bottom: 0.5rem;
+    overflow: hidden;
+}
+.proj-empty {
+    height: 250px;
+    margin-bottom: 0.5rem;
+    border: 1px dashed #222;
+    border-radius: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #444;
+    font-family: 'Inter', sans-serif;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+/* The expander sits last; the card already stretches to the row height, so the
+   actions line up without pushing the content apart. `margin-top: auto` here
+   stretched any card that had a Resume button far taller than its neighbours. */
+[class*="st-key-projcard_"] div[data-testid="stExpander"] {
+    margin-bottom: 0;
+}
+[class*="st-key-projcard_"] .stage-row {
+    margin: 0.15rem 0 0.5rem;
 }
 
 /* settings popover */
@@ -381,6 +476,16 @@ def _stages_html(project, active=None, failed=None):
     return f'<div class="stage-row">{"".join(chips)}</div>'
 
 
+def _progress_html(project, detail, started, active=None, failed=None):
+    """The live progress panel: stage chips, what is happening, and elapsed time."""
+    elapsed = int(time.time() - started)
+    mins, secs = divmod(elapsed, 60)
+    return (
+        _stages_html(project, active=active, failed=failed)
+        + f'<div class="prog-detail">{detail}<span class="prog-time">{mins}:{secs:02d}</span></div>'
+    )
+
+
 def _run_pipeline(project, out_dir, status, bar, stages):
     """Run every stage that is not done yet, in order.
 
@@ -388,29 +493,32 @@ def _run_pipeline(project, out_dir, status, bar, stages):
     pending, so it executes all five, and a resumed one picks up where it
     stopped. The filesystem stays the source of truth — each completed stage is
     persisted before the next begins.
+
+    `bar` and `stages` carry the live progress UI; `status` is only for warnings
+    that need to outlive the progress panel, such as a partly-missing image set.
     """
     steps = project["steps"]
+    started = time.time()
 
-    def mark(key):
+    def mark(key, detail=""):
         _save_project(out_dir, project)
-        stages.markdown(_stages_html(project, active=key), unsafe_allow_html=True)
+        stages.markdown(_progress_html(project, detail, started, active=key),
+                        unsafe_allow_html=True)
 
-    stages.markdown(_stages_html(project, active="audio"), unsafe_allow_html=True)
+    mark("audio", "Generating voiceover…")
     if steps["audio"]["status"] != "done":
-        status.info("Generating voiceover...")
         synthesize_edge(project["narration"], project["voice_id"], f"{out_dir}/audio.mp3")
         steps["audio"] = {"status": "done"}
-        mark("transcribe")
+    mark("transcribe", "Aligning word timings…")
     bar.progress(20)
 
     if steps["transcribe"]["status"] != "done":
-        status.info("Aligning word timings...")
         words = transcribe(f"{out_dir}/audio.mp3")
         json.dump(words, open(f"{out_dir}/transcript.json", "w"))
         steps["transcribe"] = {"status": "done"}
-        mark("images")
     else:
         words = json.load(open(f"{out_dir}/transcript.json"))
+    mark("images", "Preparing images…")
     bar.progress(35)
 
     prompts = project.get("image_prompts", [])
@@ -421,7 +529,6 @@ def _run_pipeline(project, out_dir, status, bar, stages):
         # Legacy project: prompts were never persisted, but the images are real.
         images = have
         steps["images"] = {"status": "done"}
-        mark("assemble")
     else:
         if not prompts:
             raise RuntimeError("This project has no image prompts to generate from.")
@@ -431,12 +538,12 @@ def _run_pipeline(project, out_dir, status, bar, stages):
         if have:
             status.warning(f"Only {len(have)} of {len(prompts)} images are on disk. "
                            f"The rest will be generated again and charged again.")
-        status.info("Generating images...")
 
         def img_progress(i, n, action):
             bar.progress(35 + 45 * i // n)
-            status.info(f"Generating images... {i}/{n}")
-            stages.markdown(_stages_html(project, active="images"), unsafe_allow_html=True)
+            stages.markdown(_progress_html(project, f"Generating image {i} of {n}…",
+                                           started, active="images"),
+                            unsafe_allow_html=True)
 
         provider = project.get("image_provider") or "openrouter"
         images, cost = generate_images(prompts, out_dir, project["image_model"],
@@ -446,11 +553,10 @@ def _run_pipeline(project, out_dir, status, bar, stages):
             raise RuntimeError(f"Only {len(images)}/{len(prompts)} images generated. Check the image model.")
         project["total_cost"] = project.get("total_cost", 0) + cost
         steps["images"] = {"status": "done"}
-        mark("assemble")
+    mark("assemble", "Rendering video — this is the slow one…")
     bar.progress(80)
 
     if steps["assemble"]["status"] != "done":
-        status.info("Rendering video...")
         if not images:
             raise RuntimeError("No images to assemble — the image step needs to run first.")
         assemble(images, f"{out_dir}/audio.mp3", words, f"{out_dir}/final.mp4",
@@ -458,6 +564,12 @@ def _run_pipeline(project, out_dir, status, bar, stages):
         steps["assemble"] = {"status": "done"}
     project["status"] = "completed"
     _save_project(out_dir, project)
+    elapsed = int(time.time() - started)
+    stages.markdown(
+        _stages_html(project)
+        + f'<div class="prog-detail">Done in {elapsed // 60}:{elapsed % 60:02d}</div>',
+        unsafe_allow_html=True,
+    )
     bar.progress(100)
 
 
@@ -772,49 +884,55 @@ with tab_projects:
         cols = st.columns(3)
         for i, (pid, proj) in enumerate(projects):
             with cols[i % 3]:
-                steps = proj.get("steps", {})
-                done = sum(1 for s in STEP_NAMES if steps.get(s, {}).get("status") == "done")
-                pct = int(done / len(STEP_NAMES) * 100)
-                status = proj.get("status")
-                badge = {"completed": "Ready", "failed": "Failed", "in_progress": "Unfinished"}.get(status, "Unknown")
+                with st.container(key=f"projcard_{pid}"):
+                    steps = proj.get("steps", {})
+                    done = sum(1 for s in STEP_NAMES if steps.get(s, {}).get("status") == "done")
+                    pct = int(done / len(STEP_NAMES) * 100)
+                    status = proj.get("status")
+                    badge = {"completed": "Ready", "failed": "Failed",
+                             "in_progress": "Unfinished"}.get(status, "Unknown")
 
-                video_path = f"{PROJECTS_DIR}/{pid}/final.mp4"
-                images = sorted(glob.glob(f"{PROJECTS_DIR}/{pid}/img_*.png"))
-                if os.path.exists(video_path):
-                    st.video(video_path)
-                elif images:
-                    st.image(images[0])
-                else:
-                    st.caption("No preview")
+                    video_path = f"{PROJECTS_DIR}/{pid}/final.mp4"
+                    images = sorted(glob.glob(f"{PROJECTS_DIR}/{pid}/img_*.png"))
 
-                st.markdown(
-                    f'<div class="proj-title">{badge} · {pct}%</div>'
-                    f'<div class="proj-meta">{pid} · ${proj.get("total_cost", 0) or 0:.2f}</div>',
-                    unsafe_allow_html=True,
-                )
-                st.progress(pct / 100)
-
-                b1, b2 = st.columns(2)
-                with b1:
-                    if status in ("failed", "in_progress"):
-                        if st.button("Resume", key=f"resume_{pid}", use_container_width=True):
-                            st.session_state["_resume_pid"] = pid
-                with b2:
+                    # Every card reserves the same preview height, so the grid rows
+                    # line up whether the project has a video, a still, or nothing.
                     if os.path.exists(video_path):
-                        st.download_button("Download", open(video_path, "rb"),
-                                           file_name=f"{pid}.mp4", key=f"dl_{pid}",
-                                           use_container_width=True)
-                with st.expander("Details"):
-                    if os.path.exists(f"{PROJECTS_DIR}/{pid}/audio.mp3"):
-                        st.audio(f"{PROJECTS_DIR}/{pid}/audio.mp3")
-                    st.markdown(_stages_html(proj), unsafe_allow_html=True)
-                    st.caption(f"Model: {proj.get('image_model_label') or '—'}")
-                    st.caption(f"Music: {proj.get('music') or 'none'}")
-                    if proj.get("seed"):
-                        st.caption(f"Seed: {proj['seed']}")
-                    if st.button("Delete project", key=f"del_{pid}", use_container_width=True):
-                        shutil.rmtree(f"{PROJECTS_DIR}/{pid}")
-                        st.rerun()
+                        st.video(video_path)
+                    elif images:
+                        st.image(images[0])
+                    else:
+                        st.markdown('<div class="proj-empty">No preview yet</div>',
+                                    unsafe_allow_html=True)
+
+                    st.markdown(
+                        f'<div class="proj-title">{badge} · {pct}%</div>'
+                        f'<div class="proj-meta">{pid} · ${proj.get("total_cost", 0) or 0:.2f}</div>',
+                        unsafe_allow_html=True,
+                    )
+                    st.progress(pct / 100)
+
+                    b1, b2 = st.columns(2)
+                    with b1:
+                        if status in ("failed", "in_progress"):
+                            if st.button("Resume", key=f"resume_{pid}", use_container_width=True):
+                                st.session_state["_resume_pid"] = pid
+                    with b2:
+                        if os.path.exists(video_path):
+                            st.download_button("Download", open(video_path, "rb"),
+                                               file_name=f"{pid}.mp4", key=f"dl_{pid}",
+                                               use_container_width=True)
+                    with st.expander("Details"):
+                        if os.path.exists(f"{PROJECTS_DIR}/{pid}/audio.mp3"):
+                            st.audio(f"{PROJECTS_DIR}/{pid}/audio.mp3")
+                        st.markdown(_stages_html(proj), unsafe_allow_html=True)
+                        st.caption(f"Model: {proj.get('image_model_label') or '—'}")
+                        st.caption(f"Music: {proj.get('music') or 'none'}")
+                        if proj.get("seed"):
+                            st.caption(f"Seed: {proj['seed']}")
+                        if st.button("Delete project", key=f"del_{pid}", use_container_width=True):
+                            shutil.rmtree(f"{PROJECTS_DIR}/{pid}")
+                            st.rerun()
 
         # --- resume ---------------------------------------------------------
         if st.session_state.get("_resume_pid"):
