@@ -147,13 +147,20 @@ def _generate_kenari(prompts, output_dir, model, progress_cb=None, seed=None, wo
                 with open(path, "wb") as f:
                     f.write(base64.b64decode(b64))
             else:
-                img_url = images[0].get("url")
-                if not img_url:
+                # Kenari returns a data: URI in `url` for some models rather than
+                # an http link, so decode it in place instead of fetching.
+                img_url = images[0].get("url") or ""
+                if img_url.startswith("data:"):
+                    _, _, payload = img_url.partition(",")
+                    with open(path, "wb") as f:
+                        f.write(base64.b64decode(payload))
+                elif img_url:
+                    img_resp = requests.get(img_url, timeout=120)
+                    img_resp.raise_for_status()
+                    with open(path, "wb") as f:
+                        f.write(img_resp.content)
+                else:
                     raise RuntimeError("Kenari response had neither b64_json nor url")
-                img_resp = requests.get(img_url, timeout=120)
-                img_resp.raise_for_status()
-                with open(path, "wb") as f:
-                    f.write(img_resp.content)
         except requests.RequestException as e:
             body_txt = e.response.text if e.response is not None else "no response"
             raise RuntimeError(f"Kenari image gen failed for prompt {i}: {e} — {body_txt}")
