@@ -13,7 +13,7 @@ from pipeline.audio import synthesize_edge, list_edge_voices  # noqa: E402
 from pipeline.script import generate_script  # noqa: E402
 from pipeline.transcribe import transcribe  # noqa: E402
 from pipeline.images import generate_images  # noqa: E402
-from pipeline.assemble import assemble  # noqa: E402
+from pipeline.assemble import assemble, MUSIC_DIR  # noqa: E402
 from pipeline.cost import PRICES, KENARI_IMAGE_IDR, KENARI_IMAGE_IDR_DEFAULT, IDR_PER_USD  # noqa: E402
 
 PROJECTS_DIR = "output"
@@ -231,6 +231,16 @@ div[data-testid="stPopoverBody"] .stCaption {
 
 
 
+def _resume_music(proj):
+    name = proj.get("music")
+    if not name:
+        return None
+    path = os.path.join(MUSIC_DIR, name)
+    if not os.path.exists(path):
+        raise RuntimeError(f"Music track for this project is missing: {path}")
+    return path
+
+
 def _save_project(path, data):
     with open(f"{path}/project.json", "w") as f:
         json.dump(data, f, indent=2)
@@ -299,7 +309,7 @@ with col_s:
         st.text_input("Ollama", value="llama3", key="_settings_ollama")
         st.text_input("DeepSeek", value="deepseek-v4-flash", key="_settings_deepseek")
         st.text_input("OpenRouter", value="openai/gpt-4o-mini", key="_settings_openrouter_llm")
-        st.text_input("Kenari", value="agnes-3-0-flash:free", key="_settings_kenari")
+        st.text_input("Kenari", value="deepseek-v4-1-flash", key="_settings_kenari")
 
 if not os.getenv("OPENROUTER_API_KEY"):
     st.warning("OPENROUTER_API_KEY not set in .env")
@@ -363,6 +373,22 @@ with tab_gen:
         horizontal=True,
     )
 
+    col3, col4 = st.columns(2)
+    with col3:
+        _tracks = sorted(glob.glob(f"{MUSIC_DIR}/*.mp3")) if os.path.isdir(MUSIC_DIR) else []
+        _track_labels = ["Off"] + [os.path.basename(t) for t in _tracks]
+        _track = st.selectbox("Music", _track_labels)
+        music_path = _tracks[_track_labels.index(_track) - 1] if _track != "Off" else None
+    with col4:
+        music_volume = st.slider("Music volume", 0.0, 1.0, 0.15, 0.01,
+                                 disabled=music_path is None)
+        lock_character = st.toggle("Lock character (fixed seed)")
+    if lock_character:
+        seed = st.session_state.setdefault("_seed", int.from_bytes(os.urandom(4), "big"))
+        st.caption(f"Seed {seed} — the same seed reproduces the same cast")
+    else:
+        seed = None
+
     # fingerprint of current inputs to detect changes
     current_fp = {"source": source, "voice": voice_id, "img_model": img_model[1], "llm": llm_provider, "preset": style_preset, "custom_style": style if style_preset == "Custom" else "", "settings_fp": st.session_state.get("_settings_img_models", "") + st.session_state.get("_settings_ollama", "") + st.session_state.get("_settings_deepseek", "") + st.session_state.get("_settings_openrouter_llm", "") + st.session_state.get("_settings_kenari", "")}
     inputs_changed = st.session_state.get("last_fp") != current_fp
@@ -376,7 +402,7 @@ with tab_gen:
                 elif "DeepSeek" in llm_provider:
                     provider, llm_model = "deepseek", st.session_state.get("_settings_deepseek") or "deepseek-v4-flash"
                 elif "Kenari" in llm_provider:
-                    provider, llm_model = "kenari", st.session_state.get("_settings_kenari") or "agnes-3-0-flash:free"
+                    provider, llm_model = "kenari", st.session_state.get("_settings_kenari") or "deepseek-v4-1-flash"
                 else:
                     provider, llm_model = "openrouter", st.session_state.get("_settings_openrouter_llm") or "openai/gpt-4o-mini"
                 result = generate_script(source, provider=provider, model=llm_model)
@@ -444,6 +470,8 @@ with tab_gen:
                 "image_model": img_model[1], "image_model_label": img_model[0],
                 "image_provider": img_model[2],
                 "image_style": style, "llm_provider": llm_provider,
+                "seed": seed, "music": os.path.basename(music_path) if music_path else None,
+                "music_volume": music_volume,
                 "total_cost": st.session_state.get("_llm_cost", 0),
                 "steps": {s: {"status": "pending"} for s in ["script", "audio", "transcribe", "images", "assemble"]},
             }
@@ -480,7 +508,7 @@ with tab_gen:
                     bar.progress(pct)
                     status.info(f"Image {i+1}/{n}")
 
-                images, img_cost = generate_images(prompts, out_dir, img_model[1], provider=img_model[2], progress_cb=img_progress)
+                images, img_cost = generate_images(prompts, out_dir, img_model[1], provider=img_model[2], progress_cb=img_progress, seed=seed)
                 if len(images) != len(prompts):
                     raise RuntimeError(f"Only {len(images)}/{len(prompts)} images generated. Check the image model.")
                 project["total_cost"] += img_cost
@@ -489,7 +517,8 @@ with tab_gen:
                 bar.progress(80)
 
                 status.info("Assembling video...")
-                assemble(images, f"{out_dir}/audio.mp3", words, f"{out_dir}/final.mp4")
+                assemble(images, f"{out_dir}/audio.mp3", words, f"{out_dir}/final.mp4",
+                         music_path=music_path, music_volume=music_volume)
                 project["steps"]["assemble"] = {"status": "done"}
                 project["status"] = "completed"
                 _save_project(out_dir, project)
@@ -583,7 +612,7 @@ with tab_projects:
                                     "This project was generated with a local image model, which "
                                     "cannot be resumed from the UI yet. Re-run it from the Generate tab."
                                 )
-                            images, img_cost = generate_images(prompts, out_dir, proj["image_model"], provider=_prov, progress_cb=img_progress)
+                            images, img_cost = generate_images(prompts, out_dir, proj["image_model"], provider=_prov, progress_cb=img_progress, seed=proj.get("seed"))
                             if len(images) != len(prompts):
                                 raise RuntimeError(f"Only {len(images)}/{len(prompts)} images generated. Check the image model.")
                             proj["total_cost"] = proj.get("total_cost", 0) + img_cost
@@ -603,7 +632,8 @@ with tab_projects:
                             status.info("Assembling video...")
                             if not images:
                                 raise RuntimeError("No valid images to assemble")
-                            assemble(images, f"{out_dir}/audio.mp3", words, f"{out_dir}/final.mp4")
+                            assemble(images, f"{out_dir}/audio.mp3", words, f"{out_dir}/final.mp4",
+                                     music_path=_resume_music(proj), music_volume=proj.get("music_volume", 0.15))
                             steps["assemble"] = {"status": "done"}
                             proj["status"] = "completed"
                             _save_project(out_dir, proj)
