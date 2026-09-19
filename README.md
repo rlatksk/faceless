@@ -14,6 +14,9 @@ Runs entirely on your machine, or leans on APIs — your choice, per stage.
 - **Text-to-speech** — Edge TTS, free, no key, every English voice it exposes
 - **Transcription** — faster-whisper with word timestamps, CPU, int8
 - **Images** — OpenRouter (Gemini 3.x, Grok Imagine), Kenari (Nano Banana, Grok), or local SDXL / SDXL Turbo
+- **Parallel images** — up to 4 concurrent requests on the API providers; local diffusers stays serial
+- **Character lock** — a per-project seed so the same cast recurs across scenes
+- **Music bed** — optional ambient track, side-chain ducked 18 dB under narration
 - **Assembly** — MoviePy + FFmpeg, 1080×1920 @ 24 fps, H.264/AAC
 - **Captions** — word-by-word highlighting with a pop-scale animation
 - **Cost estimate** before you spend anything, and actual cost tracking after
@@ -71,7 +74,7 @@ DEEPSEEK_API_KEY=...
 [Kenari](https://kenari.id) is an OpenAI-compatible gateway billed in Rupiah. Two things worth knowing:
 
 - **A subscription plan covers chat, not images.** Per their billing docs, "embeddings, images, audio, video, rerank, and document reading are always paid from balance." Images need PAYG balance (top up from Rp 1.000); chat works on a plan alone. Without balance, image calls return `402` and the app tells you so.
-- **`:free` model IDs cost nothing.** Append `:free` to a chat model id (e.g. `agnes-3-0-flash:free`) and it runs at Rp 0 with a per-minute rate limit. This is the cheapest way to run the scripting stage with no local model.
+- **`:free` model IDs cost nothing.** Append `:free` to a chat model id (e.g. `step-3-7-flash:free`) and it runs at Rp 0 with a per-minute rate limit. This is the cheapest way to run the scripting stage with no local model.
 
 The cheapest path needs **no keys at all**: Ollama for scripting, local SDXL Turbo for images, Edge TTS for audio.
 
@@ -114,7 +117,15 @@ Add any other OpenRouter model ID under **⚙ Settings → Image Models** (one p
 
 Pick **Custom** to supply your own style tag. It is appended to each prompt as `, {your style} style`.
 
-### 4. Estimate, then generate
+### 4. Optional: lock the character and add music
+
+**Lock character (fixed seed)** sends a fixed `seed` with every image request, so the cast stays consistent between scenes instead of drifting. The seed is generated once per session, shown under the toggle, and stored in `project.json` — a resumed run reproduces the same images. Models that reject the field are retried without it rather than failing; the local diffusers path gets it as a torch generator instead.
+
+**Music** picks a track from `assets/music/` (Off by default, so existing behaviour is unchanged) and **Music volume** sets its level. The bed loops to the video length, fades out over the last 2 s, and is ducked 18 dB under speech using the word timestamps — so it sits at full level in pauses and drops out of the way of narration.
+
+The three bundled tracks are synthesised ambient drones generated for this repo, so they are licence-free for monetised uploads. Drop any `.mp3` into `assets/music/` to add your own.
+
+### 5. Estimate, then generate
 
 **Estimate Cost** runs the LLM first (free on Ollama, fractions of a cent on the API providers) to learn how many images will be needed, then shows a cost breakdown. Nothing is charged beyond the LLM call until you press **Generate Video**.
 
@@ -131,7 +142,7 @@ output/2026-09-19_143022/
 └── final.mp4          # the deliverable
 ```
 
-### 5. Resume if it fails
+### 6. Resume if it fails
 
 The **Projects** tab lists every run with its progress and cost. Anything `failed` or `in_progress` gets a **Resume** button that restarts from the last incomplete stage — generated images are reused, not regenerated.
 
@@ -164,7 +175,11 @@ Five stages, always in this order, each one a plain function call in `app.py`:
 
 **State lives on the filesystem.** There is no database and no in-memory run state — `project.json` plus the artifacts beside it *are* the run. That is what makes resume work: the app infers which stages completed by checking which files exist.
 
+**Image generation is concurrent on the API providers.** `pipeline/images.py` runs up to `MAX_WORKERS` (4) requests at once through a thread pool, which matters because each request is a blocking round trip. `_generate_local` stays serial — one diffusers pipeline is not thread-safe. Images already on disk are skipped without a request, and the first failure still aborts the run, so the existing resume behaviour is unchanged.
+
 **Assembly details.** Scene boundaries are placed by dividing total audio duration across the images, then snapping each boundary to the nearest sentence-ending word so cuts land on natural pauses. Captions are grouped into chunks of up to 5 words or 2 seconds, whichever comes first, and rendered word-by-word: a yellow highlight with a pop-scale animation, followed by the same word in white for the remainder of its duration. Font size shrinks automatically if a line would overflow the frame width.
+
+**Music ducking.** The bed is looped to the narration length, faded out over the last 2 s, and multiplied by a gain envelope sampled at 100 Hz from the word timestamps: `1.0` in pauses, `-18 dB` under speech, with a 50 ms attack and 350 ms release so the transitions are not audible as pumping. Narration is mixed on top unmodified, and the mix is scaled so it cannot clip.
 
 ---
 
@@ -177,7 +192,7 @@ Model defaults are editable at runtime under **⚙ Settings**:
 - Ollama — `llama3`
 - DeepSeek — `deepseek-v4-flash`
 - OpenRouter — `openai/gpt-4o-mini`
-- Kenari — `agnes-3-0-flash:free`
+- Kenari — `deepseek-v4-1-flash`
 
 Local model IDs encode inference steps with a `__N` suffix. `stabilityai/stable-diffusion-xl-base-1.0__10` means SDXL base at 10 steps. Without a suffix, SDXL base runs 30 steps and SDXL Turbo runs 4 at guidance 0.
 
@@ -192,9 +207,10 @@ faceless/
 │   ├── script.py           # Kenari / Ollama / DeepSeek / OpenRouter
 │   ├── audio.py            # Edge TTS
 │   ├── transcribe.py       # faster-whisper
-│   ├── images.py           # OpenRouter / local diffusers
-│   ├── assemble.py         # MoviePy composite + captions
+│   ├── images.py           # OpenRouter / Kenari / local diffusers
+│   ├── assemble.py         # MoviePy composite + captions + ducked music
 │   └── cost.py             # pricing constants
+├── assets/music/           # bundled ambient beds (licence-free)
 ├── .streamlit/config.toml  # theme + telemetry
 ├── output/                 # run artifacts (gitignored)
 ├── requirements.txt
@@ -240,6 +256,8 @@ faceless/
 - `script.txt` is written in the system codepage on Windows, so non-ASCII characters may render incorrectly.
 - Switching between local image models within one session reuses the first loaded pipeline.
 - Legacy projects that predate `image_prompts` being stored can never reach 100% progress, because the image-completion check compares against a stored prompt count of zero.
+- The image seed is only as good as the provider: models that ignore `seed` will still drift, and the retry-without-seed fallback means a run can silently proceed unseeded.
+- Concurrent image requests are capped at 4 with no rate-limit backoff; a provider that throttles will fail the run rather than wait.
 
 See `AGENTS.md` for a fuller list with file and line references.
 

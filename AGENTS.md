@@ -17,16 +17,20 @@ Streamlit app that turns source text into a 1080×1920 vertical video. Five stag
 | script | `generate_script(source, provider, model)` | `script.txt`, `project.json` |
 | audio | `synthesize_edge(narration, voice, out)` | `audio.mp3` |
 | transcribe | `transcribe(audio_path)` | `transcript.json` |
-| images | `generate_images(prompts, out_dir, model, provider, progress_cb)` | `img_NNN.png` |
-| assemble | `assemble(images, audio, timestamps, out)` | `final.mp4` |
+| images | `generate_images(prompts, out_dir, model, provider, progress_cb, seed)` | `img_NNN.png` |
+| assemble | `assemble(images, audio, timestamps, out, music_path, music_volume)` | `final.mp4` |
 
 `generate_images` is the only stage returning a tuple: `(paths, cost)`. All others return `None` or a value. Timestamps are `{"word": str, "start": float, "end": float}`; `assemble` consumes them directly.
+
+**`seed` and the music arguments are optional and default to off**, so every stage stays callable with its original positional signature. `seed=None` means unseeded; a music path of `None` means no bed. Both are persisted in `project.json` (`seed`, `music`, `music_volume`) so resume reproduces the same run.
 
 **State is the filesystem.** One run = one directory `output/<YYYY-MM-DD_HHMMSS>/` containing `project.json`, `script.txt`, `audio.mp3`, `transcript.json`, `img_000.png…`, `final.mp4`. `project.json` holds `narration`, `image_prompts`, `voice_id`, `image_model`, `total_cost`, and `steps` — a dict of `{stage: {"status": "pending"|"done"}}`.
 
 There is no database and no in-memory run state. Any stage can be re-entered from disk, which is what makes resume work.
 
-**Provider dispatch is plain strings.** LLM: `"ollama"` | `"deepseek"` | `"openrouter"`, chosen by substring-matching the radio label (`app.py:367-372`) — the label text and the provider string are coupled. Images: `"local"` | `"openrouter"`, carried as the third element of each entry in the model list (`app.py:330-336`). Local model IDs encode inference steps as a `__N` suffix, parsed at `images.py:76-78`: `stabilityai/stable-diffusion-xl-base-1.0__10` = 10 steps.
+**Provider dispatch is plain strings.** LLM: `"ollama"` | `"deepseek"` | `"kenari"` | `"openrouter"`, chosen by substring-matching the radio label (`app.py:369-380`) — the label text and the provider string are coupled. Images: `"local"` | `"kenari"` | `"openrouter"`, carried as the third element of each entry in the model list. Local model IDs encode inference steps as a `__N` suffix, parsed in `_generate_local`: `stabilityai/stable-diffusion-xl-base-1.0__10` = 10 steps.
+
+**Image generation is concurrent on the HTTP providers.** `_run_parallel` in `images.py` fans prompts out over a `ThreadPoolExecutor` capped at `MAX_WORKERS` (4). `_generate_local` stays serial — the diffusers pipeline is not thread-safe. Progress is reported as a completion *count* under a lock, never a prompt index, so out-of-order finishes cannot make the bar go backwards. Worker threads get the Streamlit script context via `_attach_script_ctx()` before touching a widget. The first failure propagates, matching the old serial behaviour.
 
 **Resume is a file-existence heuristic.** `_load_or_backfill` (`app.py:238-270`) infers each step's status from which artifacts exist, then rewrites `project.json`. It runs for every project on every render of the Projects tab.
 
@@ -35,17 +39,18 @@ There is no database and no in-memory run state. Any stage can be re-entered fro
 ## Key Directories
 
 ```
-app.py                  # Entire UI + orchestration (601 lines)
+app.py                  # Entire UI + orchestration
 pipeline/               # One module per stage; no cross-imports
   script.py             # LLM → {narration, image_prompts}
   audio.py              # Edge TTS (async under the hood)
   transcribe.py         # faster-whisper word timestamps
-  images.py             # OpenRouter API or local diffusers
-  assemble.py           # MoviePy composite + word-highlight subtitles
+  images.py             # OpenRouter / Kenari HTTP, or local diffusers
+  assemble.py           # MoviePy composite + word-highlight subtitles + ducked music
   cost.py               # PRICES dict only — no functions
+assets/music/           # Bundled ambient beds, licence-free (synthesised for this repo)
 .streamlit/config.toml  # Theme + telemetry off
 output/                 # Runtime artifacts, gitignored
-tests/                  # Empty — see Testing & QA
+tests/test_pipeline.py  # 13 tests: ducking envelope + concurrent runner
 ```
 
 ## Development Commands
@@ -57,6 +62,7 @@ pip install -r requirements.txt
 
 streamlit run app.py     # UI at localhost:8501
 ruff check .             # Lint (no config file — runs on defaults)
+pytest                   # 13 tests — see Testing & QA
 ruff format .
 ```
 
@@ -91,7 +97,7 @@ Launch from the repo root: `load_dotenv()` and `PROJECTS_DIR = "output"` are bot
 | `pipeline/assemble.py:17-62` | `assemble` — segment boundaries, composite, subtitle overlay. |
 | `pipeline/assemble.py:125-184` | Per-word subtitle rendering: yellow highlight clip + white remainder, pop scale effect. |
 | `pipeline/cost.py` | `PRICES` — 4 image keys, 3 LLM keys. No functions; estimate math lives inline in `app.py:382-398`. |
-| `.env.example` | Two keys — `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY` — plus a commented optional `HF_HOME`. |
+| `.env.example` | Three keys — `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY`, `KENARI_API_KEY` — plus a commented optional `HF_HOME`. |
 
 ## Runtime/Tooling Preferences
 
@@ -109,13 +115,12 @@ Launch from the repo root: `load_dotenv()` and `PROJECTS_DIR = "output"` are bot
 
 ## Testing & QA
 
-**There is no test suite.** `tests/` contains zero `.py` files — only `tests/__pycache__/*.pyc` left over from a deleted suite. `pytest` collects nothing and exits 5.
+**A small suite exists:** `tests/test_pipeline.py`, 13 tests, covering the ducking
+envelope in `pipeline/assemble.py` and the concurrent runner in `pipeline/images.py` —
+the two pieces of fiddly deterministic logic. `pytest` collects and passes.
 
-The deleted `tests/test_cost.py` imported `estimate_image_cost`, `estimate_llm_cost`, and `format_estimate` from `pipeline.cost`. Those functions no longer exist (the module was reduced to the `PRICES` dict in commit `1be6159`), so the old tests are not recoverable — the API they tested is gone.
-
-**Lint is the only working gate:** `ruff check .` covers 7 Python files on default rules and is expected to pass.
-
-**Verifying a change** therefore means exercising the app, not running tests:
+Everything else is I/O-bound and its correctness shows up in the produced artifacts, so
+**verifying a change still means exercising the app**, not running tests:
 
 ```bash
 streamlit run app.py
@@ -125,7 +130,7 @@ Then walk the affected path in the UI. The cheapest end-to-end check is the Gene
 
 Streamlit hot-reloads `app.py`, but **not** imported modules. Restart the server after editing anything in `pipeline/`.
 
-If you add tests, they need `pipeline.cost`-style pure functions to be worth writing; most of this codebase is I/O-bound and its correctness shows up in the produced artifacts.
+New tests are worth writing for pure, deterministic logic (the segment-boundary helpers qualify); most of the rest is I/O-bound and its correctness shows up in the produced artifacts.
 
 ## Pitfalls
 
@@ -136,4 +141,6 @@ Known live bugs and landmines. Not a backlog — just things that will bite.
 - **Local SDXL base is mispriced** at $0.07/img in the estimate: `_default_ids` (`app.py:382`) omits the `__10` variant, so it takes the custom-model branch despite running locally for free.
 - **`_pipe` is never invalidated** when the selected local model changes — switching models reuses the first-loaded pipeline.
 - **`script.txt` is written cp1252** on Windows (`app.py:438`, no `encoding=`). Em dashes land as `\x97`. `project.json` and `transcript.json` are safe via `json.dump`'s `ensure_ascii=True`.
-- **`list_edge_voices()` is called every rerun** and only `RuntimeError` is caught (`app.py:326`) — other exception types escape the handler.
+- **`list_edge_voices()` is called every rerun** and only `RuntimeError` is caught — other exception types escape the handler.
+- **Seeds are only honoured by some models.** An unsupported `seed` field is retried without it (`_post_image`, 400 only), so a run can silently proceed unseeded rather than failing loudly. `seed=None` sends nothing at all.
+- **Concurrency is capped at 4 with no rate-limit backoff.** A provider that throttles returns an error, and the first failure aborts the run — the images already on disk are reused on resume.

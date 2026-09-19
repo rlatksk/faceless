@@ -70,12 +70,16 @@ This is not Conventional Commits — the original commits all use this bare form
 
 ## Testing
 
-There is currently **no test suite**. `tests/` contains only stale bytecode from a suite that was deleted along with the functions it tested. `pytest` collects nothing.
-
-That means verification is manual. Before opening a PR:
+There is a small suite covering the two pieces of fiddly, deterministic logic: the ducking envelope in `pipeline/assemble.py` and the concurrent runner in `pipeline/images.py`.
 
 ```bash
-ruff check .        # must pass — this is the only automated gate
+pytest              # 13 tests
+ruff check .        # must pass — the only other automated gate
+```
+
+That is deliberately not broad. Most of this codebase is I/O-bound, and its correctness shows up in the produced video — so beyond those two modules, verification is manual:
+
+```bash
 streamlit run app.py
 ```
 
@@ -83,7 +87,7 @@ Then walk the path you changed in the UI. The cheapest full-pipeline check is Ol
 
 Remember that Streamlit hot-reloads `app.py` but not `pipeline/*.py`. Restart the server after editing pipeline modules, or you'll test stale code.
 
-If you want to add tests: `pipeline/cost.py`-style pure functions are worth testing, and the segment-boundary logic in `pipeline/assemble.py` (`_segment_boundaries`, `_group_into_segments`) is genuinely worth testing because it's fiddly and deterministic. Most of the rest is I/O-bound, and its correctness shows up in the produced video. Please don't add tests that assert implementation details or just re-assert that a function was called.
+New tests are welcome for pure, deterministic logic like `_segment_boundaries`. Please don't add tests that assert implementation details, re-assert that a function was called, or exist only so a change "has tests".
 
 ## Pull requests
 
