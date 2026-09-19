@@ -111,4 +111,4 @@ Don't open a public issue for a security problem — email the maintainer instea
 
 ## License
 
-No license is currently declared, so contributions can't be formally licensed for redistribution yet. By opening a PR you're agreeing that your contribution can be distributed under whatever license the project adopts.
+MIT — see [LICENSE](LICENSE). By opening a pull request you agree that your contribution is licensed under the same terms.

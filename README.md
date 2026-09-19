@@ -10,10 +10,10 @@ Runs entirely on your machine, or leans on APIs — your choice, per stage.
 
 ## What it does
 
-- **LLM scripting** — Ollama (local, free), DeepSeek, or OpenRouter
+- **LLM scripting** — Kenari, Ollama (local, free), DeepSeek, or OpenRouter
 - **Text-to-speech** — Edge TTS, free, no key, every English voice it exposes
 - **Transcription** — faster-whisper with word timestamps, CPU, int8
-- **Images** — OpenRouter (Gemini 3.x, Grok Imagine) or local SDXL / SDXL Turbo
+- **Images** — OpenRouter (Gemini 3.x, Grok Imagine), Kenari (Nano Banana, Grok), or local SDXL / SDXL Turbo
 - **Assembly** — MoviePy + FFmpeg, 1080×1920 @ 24 fps, H.264/AAC
 - **Captions** — word-by-word highlighting with a pop-scale animation
 - **Cost estimate** before you spend anything, and actual cost tracking after
@@ -54,14 +54,24 @@ copy .env.example .env
 ```ini
 OPENROUTER_API_KEY=sk-or-v1-...
 DEEPSEEK_API_KEY=...
-HF_HOME=E:\Projects\huggingface_cache
+
+# Optional — where model weights are cached
+# HF_HOME=
 ```
 
 | Variable | Needed for | Required? |
 |---|---|---|
 | `OPENROUTER_API_KEY` | OpenRouter LLM + all OpenRouter image models | Only if you use OpenRouter |
 | `DEEPSEEK_API_KEY` | DeepSeek LLM | Only if you pick DeepSeek |
+| `KENARI_API_KEY` | Kenari LLM + Kenari image models | Only if you pick Kenari |
 | `HF_HOME` | Where Whisper and SDXL weights are cached | Optional but recommended |
+
+### Kenari notes
+
+[Kenari](https://kenari.id) is an OpenAI-compatible gateway billed in Rupiah. Two things worth knowing:
+
+- **A subscription plan covers chat, not images.** Per their billing docs, "embeddings, images, audio, video, rerank, and document reading are always paid from balance." Images need PAYG balance (top up from Rp 1.000); chat works on a plan alone. Without balance, image calls return `402` and the app tells you so.
+- **`:free` model IDs cost nothing.** Append `:free` to a chat model id (e.g. `agnes-3-0-flash:free`) and it runs at Rp 0 with a per-minute rate limit. This is the cheapest way to run the scripting stage with no local model.
 
 The cheapest path needs **no keys at all**: Ollama for scripting, local SDXL Turbo for images, Edge TTS for audio.
 
@@ -93,6 +103,8 @@ Voices are pulled live from Edge TTS, filtered to English locales, sorted by nam
 | Gemini 3 Pro | OpenRouter | ~$0.14/img |
 | Local SDXL (10 steps) | Local | Free |
 | Local SDXL Turbo | Local | Free |
+
+Kenari models (billed in IDR per image, needs PAYG balance): Nano Banana 2 Lite 150, Nano Banana 2 250, Nano Banana Pro 350, Grok Imagine 300.
 
 Add any other OpenRouter model ID under **⚙ Settings → Image Models** (one per line) and it appears in the dropdown.
 
@@ -165,6 +177,7 @@ Model defaults are editable at runtime under **⚙ Settings**:
 - Ollama — `llama3`
 - DeepSeek — `deepseek-v4-flash`
 - OpenRouter — `openai/gpt-4o-mini`
+- Kenari — `agnes-3-0-flash:free`
 
 Local model IDs encode inference steps with a `__N` suffix. `stabilityai/stable-diffusion-xl-base-1.0__10` means SDXL base at 10 steps. Without a suffix, SDXL base runs 30 steps and SDXL Turbo runs 4 at guidance 0.
 
@@ -176,7 +189,7 @@ Local model IDs encode inference steps with a `__N` suffix. `stabilityai/stable-
 faceless/
 ├── app.py                  # Streamlit UI + pipeline orchestration
 ├── pipeline/
-│   ├── script.py           # Ollama / DeepSeek / OpenRouter
+│   ├── script.py           # Kenari / Ollama / DeepSeek / OpenRouter
 │   ├── audio.py            # Edge TTS
 │   ├── transcribe.py       # faster-whisper
 │   ├── images.py           # OpenRouter / local diffusers
@@ -212,20 +225,21 @@ faceless/
 | `OPENROUTER_API_KEY not set in .env` | Key missing or `.env` isn't in the working directory. Launch from the repo root. |
 | `Could not load voices` | Edge TTS needs outbound HTTPS. Check connectivity or a proxy. |
 | `Only N/M images generated` | One or more image requests failed. Resume — successful images are reused. |
-| Projects tab crashes on load | `output/` doesn't exist yet. Run one generation, or create the folder. |
-| Resume fails on a local-model project | Known limitation — resume currently forces the OpenRouter provider. See below. |
+| Projects tab shows no projects | `output/` is empty. Run a generation first. |
+| Resume fails on a local-model project | Known limitation — resume refuses local-model projects with a clear message rather than silently using the wrong provider. |
 | Video has no captions | Whisper returned no word timestamps, usually on very short or silent audio. |
+| Kenari images fail with `insufficient_balance` | Images bill from PAYG balance, which a subscription plan does not cover. Top up at [kenari.id/pay](https://kenari.id/pay). |
 
 ---
 
 ## Known limitations
 
-- Resume hardcodes the OpenRouter image provider, so a project created with a local model cannot be resumed locally.
-- Resuming a project whose `transcript.json` is missing can fail; the backfill logic infers transcription completed from the presence of `final.mp4`.
+- A project generated with a local image model cannot be resumed from the UI; re-run it from the Generate tab.
 - A project's `failed` status is recalculated on every render, so the failure indicator is often transient.
 - Local SDXL base is quoted at $0.07/img in the estimate despite running locally for free.
 - `script.txt` is written in the system codepage on Windows, so non-ASCII characters may render incorrectly.
 - Switching between local image models within one session reuses the first loaded pipeline.
+- Legacy projects that predate `image_prompts` being stored can never reach 100% progress, because the image-completion check compares against a stored prompt count of zero.
 
 See `AGENTS.md` for a fuller list with file and line references.
 
@@ -233,4 +247,6 @@ See `AGENTS.md` for a fuller list with file and line references.
 
 ## License
 
-No license has been declared for this repository. Until one is added, all rights are reserved by default — contact the author before reusing the code.
+[MIT](LICENSE) © 2026 Justin Salim
+
+Use it, modify it, ship it, sell it. Just keep the copyright notice.

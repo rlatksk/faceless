@@ -17,6 +17,8 @@ Keep narration under 500 words. Generate at most 10 image prompts (one per sente
         return _ollama_script(prompt, model)
     if provider == "deepseek":
         return _deepseek_script(prompt, model)
+    if provider == "kenari":
+        return _kenari_script(prompt, model)
     return _openrouter_script(prompt, model)
 
 
@@ -43,6 +45,11 @@ def _deepseek_script(prompt, model="deepseek-v4-flash"):
 def _openrouter_script(prompt, model):
     return _chat_script(prompt, model, "OpenRouter", "OPENROUTER_API_KEY",
                         "https://openrouter.ai/api/v1/chat/completions")
+
+
+def _kenari_script(prompt, model):
+    return _chat_script(prompt, model, "Kenari", "KENARI_API_KEY",
+                        "https://kenari.id/v1/chat/completions")
 
 
 def _chat_script(prompt, model, name, env_key, url):

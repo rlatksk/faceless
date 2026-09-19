@@ -14,10 +14,11 @@ from pipeline.script import generate_script  # noqa: E402
 from pipeline.transcribe import transcribe  # noqa: E402
 from pipeline.images import generate_images  # noqa: E402
 from pipeline.assemble import assemble  # noqa: E402
-from pipeline.cost import PRICES  # noqa: E402
+from pipeline.cost import PRICES, KENARI_IMAGE_IDR, KENARI_IMAGE_IDR_DEFAULT, IDR_PER_USD  # noqa: E402
 
 PROJECTS_DIR = "output"
 STEP_NAMES = ["audio", "transcribe", "images", "assemble"]
+os.makedirs(PROJECTS_DIR, exist_ok=True)
 DEFAULT_STYLE = "A dark graphic novel illustration of [INSERT YOUR SCENE / CHARACTER HERE]. Gritty indie comic book art style, thick clean black ink outlines, digital cel-shading. Dramatic cinematic lighting with deep shadows and high contrast. The characters must have large, wide-open anxious eyes with tiny pinpoint pupils, expressing shock. Suspenseful true-crime storybook aesthetic, high quality, 9:16 vertical aspect ratio."
 
 _CSS = """
@@ -241,7 +242,7 @@ def _load_or_backfill(path):
     steps["script"] = {"status": "done"}
     if os.path.exists(f"{path}/audio.mp3"):
         steps["audio"] = {"status": "done"}
-    if os.path.exists(f"{path}/transcript.json") or (os.path.exists(f"{path}/audio.mp3") and os.path.exists(f"{path}/final.mp4")):
+    if os.path.exists(f"{path}/transcript.json"):
         steps["transcribe"] = {"status": "done"}
     existing = sorted(glob.glob(f"{path}/img_*.png"))
     if os.path.exists(f"{path}/project.json"):
@@ -263,6 +264,7 @@ def _load_or_backfill(path):
         "id": pid, "status": "completed" if complete else "in_progress", "created": "",
         "source_text": "", "narration": "", "image_prompts": [],
         "voice_id": "", "image_model": "", "image_model_label": "",
+        "image_provider": "openrouter",
         "image_style": "", "llm_provider": "",
         "steps": steps,
     }
@@ -297,6 +299,7 @@ with col_s:
         st.text_input("Ollama", value="llama3", key="_settings_ollama")
         st.text_input("DeepSeek", value="deepseek-v4-flash", key="_settings_deepseek")
         st.text_input("OpenRouter", value="openai/gpt-4o-mini", key="_settings_openrouter_llm")
+        st.text_input("Kenari", value="agnes-3-0-flash:free", key="_settings_kenari")
 
 if not os.getenv("OPENROUTER_API_KEY"):
     st.warning("OPENROUTER_API_KEY not set in .env")
@@ -332,6 +335,10 @@ with tab_gen:
             ("Grok Imagine 1K \u2014 ~$0.05/img",          "x-ai/grok-imagine-image-quality",     "openrouter"),
             ("Gemini 3.1 Flash \u2014 ~$0.07/img",         "google/gemini-3.1-flash-image",       "openrouter"),
             ("Gemini 3 Pro \u2014 ~$0.14/img",             "google/gemini-3-pro-image",           "openrouter"),
+            ("Kenari: Nano Banana 2 Lite \u2014 150 IDR/img",  "nano-banana-2-lite",       "kenari"),
+            ("Kenari: Nano Banana 2 \u2014 250 IDR/img",       "nano-banana-2",            "kenari"),
+            ("Kenari: Nano Banana Pro \u2014 350 IDR/img",     "nano-banana-pro",          "kenari"),
+            ("Kenari: Grok Imagine \u2014 300 IDR/img",        "grok-imagine-image",       "kenari"),
             ("Local SDXL \u2014 Free (10 steps)",             "stabilityai/stable-diffusion-xl-base-1.0__10", "local"),
             ("Local SDXL Turbo \u2014 Free",               "stabilityai/sdxl-turbo",              "local"),
         ]
@@ -352,12 +359,12 @@ with tab_gen:
 
     llm_provider = st.radio(
         "LLM Provider",
-        ["DeepSeek (API)", "Ollama (local)", "OpenRouter (API)"],
+        ["Kenari (API)", "DeepSeek (API)", "Ollama (local)", "OpenRouter (API)"],
         horizontal=True,
     )
 
     # fingerprint of current inputs to detect changes
-    current_fp = {"source": source, "voice": voice_id, "img_model": img_model[1], "llm": llm_provider, "preset": style_preset, "custom_style": style if style_preset == "Custom" else "", "settings_fp": st.session_state.get("_settings_img_models", "") + st.session_state.get("_settings_ollama", "") + st.session_state.get("_settings_deepseek", "") + st.session_state.get("_settings_openrouter_llm", "")}
+    current_fp = {"source": source, "voice": voice_id, "img_model": img_model[1], "llm": llm_provider, "preset": style_preset, "custom_style": style if style_preset == "Custom" else "", "settings_fp": st.session_state.get("_settings_img_models", "") + st.session_state.get("_settings_ollama", "") + st.session_state.get("_settings_deepseek", "") + st.session_state.get("_settings_openrouter_llm", "") + st.session_state.get("_settings_kenari", "")}
     inputs_changed = st.session_state.get("last_fp") != current_fp
     has_estimate = st.session_state.get("script_result") is not None
 
@@ -368,6 +375,8 @@ with tab_gen:
                     provider, llm_model = "ollama", st.session_state.get("_settings_ollama") or "llama3"
                 elif "DeepSeek" in llm_provider:
                     provider, llm_model = "deepseek", st.session_state.get("_settings_deepseek") or "deepseek-v4-flash"
+                elif "Kenari" in llm_provider:
+                    provider, llm_model = "kenari", st.session_state.get("_settings_kenari") or "agnes-3-0-flash:free"
                 else:
                     provider, llm_model = "openrouter", st.session_state.get("_settings_openrouter_llm") or "openai/gpt-4o-mini"
                 result = generate_script(source, provider=provider, model=llm_model)
@@ -379,7 +388,10 @@ with tab_gen:
         imgs = len(result["image_prompts"])
         label = img_model[0]
         _default_ids = {"google/gemini-3.1-flash-lite-image", "x-ai/grok-imagine-image-quality", "google/gemini-3.1-flash-image", "google/gemini-3-pro-image", "stabilityai/sdxl-turbo"}
-        if img_model[1] not in _default_ids:
+        if img_model[2] == "kenari":
+            img_cost = round(imgs * KENARI_IMAGE_IDR.get(img_model[1], KENARI_IMAGE_IDR_DEFAULT) / IDR_PER_USD, 4)
+            cost_note = " (IDR)"
+        elif img_model[1] not in _default_ids:
             img_cost = round(imgs * PRICES["openrouter_gemini_flash"], 4)
             cost_note = " (est.)"
         else:
@@ -392,6 +404,8 @@ with tab_gen:
         tokens = result.get("_token_count", 0)
         if "Ollama" in llm_provider:
             llm_cost = 0
+        elif "Kenari" in llm_provider:
+            llm_cost = 0  # Indie plan covers chat; :free models cost nothing
         else:
             llm_key = "deepseek_llm" if "DeepSeek" in llm_provider else "openrouter_llm"
             llm_cost = round(tokens * PRICES[llm_key], 4)
@@ -428,6 +442,7 @@ with tab_gen:
                 "source_text": source, "narration": result["narration"],
                 "image_prompts": prompts, "voice_id": voice_id,
                 "image_model": img_model[1], "image_model_label": img_model[0],
+                "image_provider": img_model[2],
                 "image_style": style, "llm_provider": llm_provider,
                 "total_cost": st.session_state.get("_llm_cost", 0),
                 "steps": {s: {"status": "pending"} for s in ["script", "audio", "transcribe", "images", "assemble"]},
@@ -562,7 +577,13 @@ with tab_projects:
                                 bar.progress(pct)
                                 status.info(f"Image {i+1}/{n}")
 
-                            images, img_cost = generate_images(prompts, out_dir, proj["image_model"], provider="openrouter", progress_cb=img_progress)
+                            _prov = proj.get("image_provider") or "openrouter"
+                            if _prov == "local":
+                                raise RuntimeError(
+                                    "This project was generated with a local image model, which "
+                                    "cannot be resumed from the UI yet. Re-run it from the Generate tab."
+                                )
+                            images, img_cost = generate_images(prompts, out_dir, proj["image_model"], provider=_prov, progress_cb=img_progress)
                             if len(images) != len(prompts):
                                 raise RuntimeError(f"Only {len(images)}/{len(prompts)} images generated. Check the image model.")
                             proj["total_cost"] = proj.get("total_cost", 0) + img_cost

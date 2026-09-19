@@ -51,7 +51,6 @@ tests/                  # Empty — see Testing & QA
 ## Development Commands
 
 ```bash
-# The checked-in .venv is BROKEN (its base interpreter is gone). Recreate it:
 py -3.13 -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
@@ -92,7 +91,7 @@ Launch from the repo root: `load_dotenv()` and `PROJECTS_DIR = "output"` are bot
 | `pipeline/assemble.py:17-62` | `assemble` — segment boundaries, composite, subtitle overlay. |
 | `pipeline/assemble.py:125-184` | Per-word subtitle rendering: yellow highlight clip + white remainder, pop scale effect. |
 | `pipeline/cost.py` | `PRICES` — 4 image keys, 3 LLM keys. No functions; estimate math lives inline in `app.py:382-398`. |
-| `.env.example` | Three vars: `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY`, `HF_HOME`. |
+| `.env.example` | Two keys — `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY` — plus a commented optional `HF_HOME`. |
 
 ## Runtime/Tooling Preferences
 
@@ -132,11 +131,9 @@ If you add tests, they need `pipeline.cost`-style pure functions to be worth wri
 
 Known live bugs and landmines. Not a backlog — just things that will bite.
 
-- **`output/` missing crashes the Projects tab.** `os.listdir(PROJECTS_DIR)` (`app.py:495`) is unguarded; the dir is only created as a side effect of the first run.
-- **Resume hardcodes `provider="openrouter"`** (`app.py:565`), ignoring the stored `image_model`. A local-model project cannot be resumed locally.
-- **Backfill marks `transcribe` done without `transcript.json`** when `audio.mp3` *and* `final.mp4` both exist (`app.py:245`). Resume then does an unguarded `json.load` on the missing file (`app.py:554`) and crashes. Two existing `output/` dirs are in exactly this state.
+- **Resume hardcodes `provider="openrouter"`** (`app.py:566`), ignoring the stored `image_model`. A local-model project cannot be resumed locally.
 - **`"failed"` status is transient.** `_load_or_backfill` rewrites it to `"in_progress"` on the next render, so the ❌ icon usually disappears before you see it.
-- **Local SDXL base is mispriced** at $0.07/img in the estimate: `_default_ids` (`app.py:381`) omits the `__10` variant, so it takes the custom-model branch despite running locally for free.
+- **Local SDXL base is mispriced** at $0.07/img in the estimate: `_default_ids` (`app.py:382`) omits the `__10` variant, so it takes the custom-model branch despite running locally for free.
 - **`_pipe` is never invalidated** when the selected local model changes — switching models reuses the first-loaded pipeline.
-- **`script.txt` is written cp1252** on Windows (`app.py:437`, no `encoding=`). Em dashes land as `\x97`. `project.json` and `transcript.json` are safe via `json.dump`'s `ensure_ascii=True`.
-- **`list_edge_voices()` is called every rerun** and only `RuntimeError` is caught (`app.py:325`) — other exception types escape the handler.
+- **`script.txt` is written cp1252** on Windows (`app.py:438`, no `encoding=`). Em dashes land as `\x97`. `project.json` and `transcript.json` are safe via `json.dump`'s `ensure_ascii=True`.
+- **`list_edge_voices()` is called every rerun** and only `RuntimeError` is caught (`app.py:326`) — other exception types escape the handler.
