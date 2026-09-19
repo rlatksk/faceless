@@ -18,8 +18,40 @@ from pipeline.cost import PRICES, KENARI_IMAGE_IDR, KENARI_IMAGE_IDR_DEFAULT, ID
 
 PROJECTS_DIR = "output"
 STEP_NAMES = ["audio", "transcribe", "images", "assemble"]
-os.makedirs(PROJECTS_DIR, exist_ok=True)
+STAGE_LABELS = [
+    ("script", "Script"),
+    ("audio", "Voice"),
+    ("transcribe", "Timing"),
+    ("images", "Images"),
+    ("assemble", "Render"),
+]
 DEFAULT_STYLE = "A dark graphic novel illustration of [INSERT YOUR SCENE / CHARACTER HERE]. Gritty indie comic book art style, thick clean black ink outlines, digital cel-shading. Dramatic cinematic lighting with deep shadows and high contrast. The characters must have large, wide-open anxious eyes with tiny pinpoint pupils, expressing shock. Suspenseful true-crime storybook aesthetic, high quality, 9:16 vertical aspect ratio."
+
+DEFAULT_MODELS = {
+    "ollama": "llama3",
+    "deepseek": "deepseek-v4-flash",
+    "kenari": "deepseek-v4-1-flash",
+    "openrouter": "openai/gpt-4o-mini",
+}
+
+# Keys the app can actually use, and where to get them.
+API_KEYS = {
+    "kenari": ("KENARI_API_KEY", "Kenari", "https://kenari.id"),
+    "deepseek": ("DEEPSEEK_API_KEY", "DeepSeek", "https://platform.deepseek.com/api_keys"),
+    "openrouter": ("OPENROUTER_API_KEY", "OpenRouter", "https://openrouter.ai/keys"),
+}
+
+
+def _setting(provider):
+    """The configured model for a provider.
+
+    The Settings widgets write these keys, but they are rendered after the
+    Create tab, so on the first pass they do not exist yet. Falling back to the
+    module default keeps the value stable across reruns — reading an absent key
+    as "" would make the estimate look stale the moment Settings rendered.
+    """
+    return st.session_state.get(f"_settings_{provider}") or DEFAULT_MODELS[provider]
+
 
 _CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Teko:wght@400;600;700&family=Inter:wght@400;500;600;700&display=swap');
@@ -56,6 +88,27 @@ h2, h3 {
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
+}
+
+/* numbered section heading inside the create form */
+.step-head {
+    font-family: 'Teko', sans-serif;
+    font-weight: 600;
+    font-size: 1.15rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #ff2b2b;
+    margin: 0.5rem 0 0.25rem;
+}
+.step-head span {
+    color: #444;
+    margin-right: 0.5rem;
+}
+.step-note {
+    font-family: 'Inter', sans-serif;
+    font-size: 0.75rem;
+    color: #666;
+    margin: 0 0 0.75rem;
 }
 
 .stTabs [data-baseweb="tab-list"] {
@@ -183,62 +236,51 @@ div[role="alert"] {
     color: #ff2b2b;
 }
 
-/* settings popover */
-div[data-testid="stPopover"] > div[data-testid="stButton"] > button {
-    background: transparent;
-    border: 1px solid #333;
-    color: #888;
-    font-size: 0.8rem;
+/* stage chips — the live pipeline view */
+.stage-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 0.25rem 0 0.75rem;
+}
+.stage {
     font-family: 'Inter', sans-serif;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 3px 10px;
+    border: 1px solid #1e1e1e;
     border-radius: 2px;
-    padding: 0.25rem 0.75rem;
+    color: #555;
+    white-space: nowrap;
 }
-div[data-testid="stPopover"] > div[data-testid="stButton"] > button:hover {
-    border-color: #ff2b2b;
-    color: #ff2b2b;
+.stage.done { border-color: #1f5c2e; color: #4ade80; }
+.stage.active { border-color: #ff2b2b; color: #ff2b2b; }
+.stage.failed { border-color: #7a1f1f; color: #ff5555; }
+
+/* project gallery cards */
+.proj-title {
+    font-family: 'Inter', sans-serif;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #f5f5f5;
+    margin: 0.35rem 0 0.1rem;
 }
+.proj-meta {
+    font-family: 'Inter', sans-serif;
+    font-size: 0.7rem;
+    color: #666;
+    margin-bottom: 0.35rem;
+}
+
+/* settings popover */
 div[data-testid="stPopoverBody"] {
     background: #0a0a0a;
     border: 1px solid #1a1a1a;
     border-radius: 2px;
     min-width: 280px;
 }
-div[data-testid="stPopoverBody"] a {
-    color: #ff2b2b;
-    text-decoration: none;
-    font-family: 'Inter', sans-serif;
-    font-size: 0.85rem;
-}
-div[data-testid="stPopoverBody"] a:hover {
-    color: #cc0000;
-}
-div[data-testid="stPopoverBody"] h5 {
-    font-family: 'Teko', sans-serif;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    margin-bottom: 0.25rem;
-}
-div[data-testid="stPopoverBody"] hr {
-    border-color: #1a1a1a;
-    margin: 0.5rem 0;
-}
-div[data-testid="stPopoverBody"] .stCaption {
-    color: #555;
-    font-size: 0.75rem;
-}
 """
-
-
-
-def _resume_music(proj):
-    name = proj.get("music")
-    if not name:
-        return None
-    path = os.path.join(MUSIC_DIR, name)
-    if not os.path.exists(path):
-        raise RuntimeError(f"Music track for this project is missing: {path}")
-    return path
 
 
 def _save_project(path, data):
@@ -257,7 +299,10 @@ def _load_or_backfill(path):
     existing = sorted(glob.glob(f"{path}/img_*.png"))
     if os.path.exists(f"{path}/project.json"):
         expected = len(json.load(open(f"{path}/project.json")).get("image_prompts", []))
-        if len(existing) >= expected > 0:
+        if expected > 0:
+            if len(existing) >= expected:
+                steps["images"] = {"status": "done"}
+        elif existing:
             steps["images"] = {"status": "done"}
     elif existing:
         steps["images"] = {"status": "done"}
@@ -282,10 +327,186 @@ def _load_or_backfill(path):
     return proj
 
 
-st.set_page_config(page_title="Faceless", layout="centered")
+def _active_stage(project):
+    """The first stage that is not done — i.e. the one a failure came from."""
+    steps = project.get("steps", {})
+    for key, _ in STAGE_LABELS:
+        if steps.get(key, {}).get("status") != "done":
+            return key
+    return None
+
+
+def _music_path(project):
+    """Resolve a project's stored music track, or None if it had none."""
+    name = project.get("music")
+    if not name:
+        return None
+    path = os.path.join(MUSIC_DIR, name)
+    if not os.path.exists(path):
+        raise RuntimeError(f"Music track for this project is missing: {path}")
+    return path
+
+
+def _stages_html(project, active=None, failed=None):
+    steps = project.get("steps", {})
+    chips = []
+    for key, label in STAGE_LABELS:
+        if failed and key == failed:
+            cls = "failed"
+        elif active == key:
+            cls = "active"
+        elif steps.get(key, {}).get("status") == "done":
+            cls = "done"
+        else:
+            cls = ""
+        chips.append(f'<span class="stage {cls}">{label}</span>')
+    return f'<div class="stage-row">{"".join(chips)}</div>'
+
+
+def _run_pipeline(project, out_dir, status, bar, stages):
+    """Run every stage that is not done yet, in order.
+
+    Both the first run and Resume call this: a fresh project has every step
+    pending, so it executes all five, and a resumed one picks up where it
+    stopped. The filesystem stays the source of truth — each completed stage is
+    persisted before the next begins.
+    """
+    steps = project["steps"]
+
+    def mark(key):
+        _save_project(out_dir, project)
+        stages.markdown(_stages_html(project, active=key), unsafe_allow_html=True)
+
+    stages.markdown(_stages_html(project, active="audio"), unsafe_allow_html=True)
+    if steps["audio"]["status"] != "done":
+        status.info("Generating voiceover...")
+        synthesize_edge(project["narration"], project["voice_id"], f"{out_dir}/audio.mp3")
+        steps["audio"] = {"status": "done"}
+        mark("transcribe")
+    bar.progress(20)
+
+    if steps["transcribe"]["status"] != "done":
+        status.info("Aligning word timings...")
+        words = transcribe(f"{out_dir}/audio.mp3")
+        json.dump(words, open(f"{out_dir}/transcript.json", "w"))
+        steps["transcribe"] = {"status": "done"}
+        mark("images")
+    else:
+        words = json.load(open(f"{out_dir}/transcript.json"))
+    bar.progress(35)
+
+    prompts = project.get("image_prompts", [])
+    have = [p for p in sorted(glob.glob(f"{out_dir}/img_*.png")) if os.path.getsize(p) > 0]
+    if steps["images"]["status"] == "done" and (len(have) == len(prompts) or not prompts):
+        images = have
+    elif not prompts and have:
+        # Legacy project: prompts were never persisted, but the images are real.
+        images = have
+        steps["images"] = {"status": "done"}
+        mark("assemble")
+    else:
+        if not prompts:
+            raise RuntimeError("This project has no image prompts to generate from.")
+        status.info("Generating images...")
+
+        def img_progress(i, n, action):
+            bar.progress(35 + 45 * i // n)
+            status.info(f"Generating images... {i}/{n}")
+            stages.markdown(_stages_html(project, active="images"), unsafe_allow_html=True)
+
+        provider = project.get("image_provider") or "openrouter"
+        images, cost = generate_images(prompts, out_dir, project["image_model"],
+                                       provider=provider, progress_cb=img_progress,
+                                       seed=project.get("seed"))
+        if len(images) != len(prompts):
+            raise RuntimeError(f"Only {len(images)}/{len(prompts)} images generated. Check the image model.")
+        project["total_cost"] = project.get("total_cost", 0) + cost
+        steps["images"] = {"status": "done"}
+        mark("assemble")
+    bar.progress(80)
+
+    if steps["assemble"]["status"] != "done":
+        status.info("Rendering video...")
+        if not images:
+            raise RuntimeError("No images to assemble — the image step needs to run first.")
+        assemble(images, f"{out_dir}/audio.mp3", words, f"{out_dir}/final.mp4",
+                 music_path=_music_path(project), music_volume=project.get("music_volume", 0.15))
+        steps["assemble"] = {"status": "done"}
+    project["status"] = "completed"
+    _save_project(out_dir, project)
+    bar.progress(100)
+
+
+def _img_models(custom_raw):
+    models = [
+        ("Kenari: Nano Banana 2 Lite — 150 IDR/img", "nano-banana-2-lite", "kenari"),
+        ("Kenari: Nano Banana 2 — 250 IDR/img", "nano-banana-2", "kenari"),
+        ("Kenari: Nano Banana Pro — 350 IDR/img", "nano-banana-pro", "kenari"),
+        ("Kenari: Grok Imagine — 300 IDR/img", "grok-imagine-image", "kenari"),
+        ("Gemini 3.1 Flash Lite — ~$0.035/img", "google/gemini-3.1-flash-lite-image", "openrouter"),
+        ("Grok Imagine 1K — ~$0.05/img", "x-ai/grok-imagine-image-quality", "openrouter"),
+        ("Gemini 3.1 Flash — ~$0.07/img", "google/gemini-3.1-flash-image", "openrouter"),
+        ("Gemini 3 Pro — ~$0.14/img", "google/gemini-3-pro-image", "openrouter"),
+        ("Local SDXL — Free (10 steps)", "stabilityai/stable-diffusion-xl-base-1.0__10", "local"),
+        ("Local SDXL Turbo — Free", "stabilityai/sdxl-turbo", "local"),
+    ]
+    for line in (custom_raw or "").strip().split("\n"):
+        if line.strip():
+            models.append((line.strip(), line.strip(), "openrouter"))
+    return models
+
+
+_PRICED_OPENROUTER = {
+    "google/gemini-3.1-flash-lite-image": "openrouter_gemini_lite",
+    "x-ai/grok-imagine-image-quality": "openrouter_grok_imagine",
+    "google/gemini-3.1-flash-image": "openrouter_gemini_flash",
+    "google/gemini-3-pro-image": "openrouter_gemini_pro",
+}
+
+
+def _llm_cost_usd(llm_label, tokens):
+    """Chat cost. Ollama is local and Kenari's plan covers chat, so both are 0."""
+    if "Ollama" in llm_label or "Kenari" in llm_label:
+        return 0.0
+    key = "deepseek_llm" if "DeepSeek" in llm_label else "openrouter_llm"
+    return round(tokens * PRICES[key], 4)
+
+
+def _estimate_costs(img_model, imgs, llm_label, tokens):
+    """Return (image_cost_usd, llm_cost_usd, image_note)."""
+    label, model_id, provider = img_model
+    if provider == "local":
+        return 0.0, 0.0, "free, runs locally"
+    if provider == "kenari":
+        idr = KENARI_IMAGE_IDR.get(model_id, KENARI_IMAGE_IDR_DEFAULT)
+        return round(imgs * idr / IDR_PER_USD, 4), 0.0, f"{idr} IDR each"
+    if model_id in _PRICED_OPENROUTER:
+        return round(imgs * PRICES[_PRICED_OPENROUTER[model_id]], 4), 0.0, "OpenRouter"
+    img_cost = round(imgs * PRICES["openrouter_gemini_flash"], 4)
+    return img_cost, _llm_cost_usd(llm_label, tokens), "estimated"
+
+
+def _section(num, title, note=""):
+    st.markdown(f'<div class="step-head"><span>{num}</span>{title}</div>', unsafe_allow_html=True)
+    if note:
+        st.markdown(f'<div class="step-note">{note}</div>', unsafe_allow_html=True)
+
+
+def _llm_choice(label):
+    """Map the provider radio label to (provider, model)."""
+    if "Ollama" in label:
+        return "ollama", _setting("ollama")
+    if "DeepSeek" in label:
+        return "deepseek", _setting("deepseek")
+    if "Kenari" in label:
+        return "kenari", _setting("kenari")
+    return "openrouter", _setting("openrouter_llm")
+
+
+st.set_page_config(page_title="Faceless", layout="wide")
 st.markdown(f"<style>{_CSS}</style>", unsafe_allow_html=True)
 
-col_h, col_s = st.columns([3, 1])
+col_h, col_s = st.columns([5, 1])
 with col_h:
     st.markdown(
         '<h1 style="margin-bottom:0">FACELESS</h1>'
@@ -294,168 +515,134 @@ with col_h:
         'vertical video generator</p>',
         unsafe_allow_html=True,
     )
-with col_s:
-    with st.popover("\u2699 Settings"):
-        st.markdown("##### API Keys")
-        st.markdown("[OpenRouter](https://openrouter.ai/keys)")
-        st.markdown("[DeepSeek](https://platform.deepseek.com/api_keys)")
-        st.divider()
-        st.markdown("##### Image Models")
-        st.caption("Extra OpenRouter model IDs (one per line)")
-        st.text_area("custom image models", placeholder="black-forest-labs/flux-1.1-pro\n...",
-                     label_visibility="collapsed", key="_settings_img_models")
-        st.divider()
-        st.markdown("##### LLM Models")
-        st.text_input("Ollama", value="llama3", key="_settings_ollama")
-        st.text_input("DeepSeek", value="deepseek-v4-flash", key="_settings_deepseek")
-        st.text_input("OpenRouter", value="openai/gpt-4o-mini", key="_settings_openrouter_llm")
-        st.text_input("Kenari", value="deepseek-v4-1-flash", key="_settings_kenari")
 
-if not os.getenv("OPENROUTER_API_KEY"):
-    st.warning("OPENROUTER_API_KEY not set in .env")
+tab_create, tab_projects, tab_settings = st.tabs(["Create", "Projects", "Settings"])
 
-tab_gen, tab_projects = st.tabs(["Generate", "Projects"])
-
-with tab_gen:
+# --------------------------------------------------------------------------
+# Create
+# --------------------------------------------------------------------------
+with tab_create:
     if st.session_state.pop("_clear_source", False):
         st.session_state["source_text"] = ""
     if st.session_state.pop("_clear_style", False):
         st.session_state["style_custom"] = ""
     if st.session_state.pop("_clear_estimate", False):
         st.session_state.pop("script_result", None)
-    source = st.text_area("Source script", height=140, label_visibility="collapsed",
-                          placeholder="Paste your story or script here...", key="source_text")
 
-    col1, col2 = st.columns(2)
-    with col1:
-        try:
-            edge_voices = list_edge_voices()
-            labels = {v["name"]: v["id"] for v in edge_voices}
-            default_name = next((n for n in labels if "Eric" in n), list(labels.keys())[0])
-            default_idx = list(labels.keys()).index(default_name)
-            selected = st.selectbox("Voice", list(labels.keys()), index=default_idx)
-            voice_id = labels[selected]
-        except RuntimeError as e:
-            st.error(f"Could not load voices: {e}")
-            voice_id = "en-US-EricNeural"
+    left, mid, right = st.columns([1, 3, 1])
+    with mid:
+        _section(1, "Your story", "Paste anything with a narrative — the script model splits it into scenes.")
+        source = st.text_area("Source script", height=160, label_visibility="collapsed",
+                              placeholder="Paste your story or script here...", key="source_text")
 
-    with col2:
-        _img_models = [
-            ("Gemini 3.1 Flash Lite \u2014 ~$0.035/img", "google/gemini-3.1-flash-lite-image", "openrouter"),
-            ("Grok Imagine 1K \u2014 ~$0.05/img",          "x-ai/grok-imagine-image-quality",     "openrouter"),
-            ("Gemini 3.1 Flash \u2014 ~$0.07/img",         "google/gemini-3.1-flash-image",       "openrouter"),
-            ("Gemini 3 Pro \u2014 ~$0.14/img",             "google/gemini-3-pro-image",           "openrouter"),
-            ("Kenari: Nano Banana 2 Lite \u2014 150 IDR/img",  "nano-banana-2-lite",       "kenari"),
-            ("Kenari: Nano Banana 2 \u2014 250 IDR/img",       "nano-banana-2",            "kenari"),
-            ("Kenari: Nano Banana Pro \u2014 350 IDR/img",     "nano-banana-pro",          "kenari"),
-            ("Kenari: Grok Imagine \u2014 300 IDR/img",        "grok-imagine-image",       "kenari"),
-            ("Local SDXL \u2014 Free (10 steps)",             "stabilityai/stable-diffusion-xl-base-1.0__10", "local"),
-            ("Local SDXL Turbo \u2014 Free",               "stabilityai/sdxl-turbo",              "local"),
-        ]
-        _custom_raw = st.session_state.get("_settings_img_models", "")
-        if _custom_raw:
-            for _line in _custom_raw.strip().split("\n"):
-                _line = _line.strip()
-                if _line:
-                    _img_models.append((_line, _line, "openrouter"))
-        img_model = st.selectbox("Image Model", _img_models, format_func=lambda x: x[0], index=0)
+        _section(2, "Script", "Turns your text into narration plus one image prompt per scene.")
+        llm_label = st.radio(
+            "Script model",
+            ["Kenari (API)", "DeepSeek (API)", "Ollama (local)", "OpenRouter (API)"],
+            horizontal=True, label_visibility="collapsed")
+        llm_provider, llm_model = _llm_choice(llm_label)
+        _key_env, _key_name, _key_url = API_KEYS[llm_provider]
+        if not os.getenv(_key_env):
+            st.warning(f"{_key_env} is not set in .env — add it, or pick another script model. "
+                       f"Get a key at {_key_url}")
 
-    style_preset = st.selectbox("Style", ["Indie Dark Comic", "Custom"], label_visibility="collapsed")
-    if style_preset == "Custom":
-        style = st.text_input("Style tag", value="", label_visibility="collapsed",
-                              placeholder="Describe your custom style...", key="style_custom")
-    else:
-        style = DEFAULT_STYLE
+        _section(3, "Look and sound", "These decide the video's voice, art style and image model.")
+        c1, c2 = st.columns(2)
+        with c1:
+            try:
+                edge_voices = list_edge_voices()
+                voice_labels = {v["name"]: v["id"] for v in edge_voices}
+                default_name = next((n for n in voice_labels if "Eric" in n), list(voice_labels)[0])
+                selected = st.selectbox("Voice", list(voice_labels),
+                                        index=list(voice_labels).index(default_name))
+                voice_id = voice_labels[selected]
+            except Exception as e:
+                st.error(f"Could not load voices: {e}")
+                voice_id = "en-US-EricNeural"
 
-    llm_provider = st.radio(
-        "LLM Provider",
-        ["Kenari (API)", "DeepSeek (API)", "Ollama (local)", "OpenRouter (API)"],
-        horizontal=True,
-    )
+            style_preset = st.selectbox("Style", ["Indie Dark Comic", "Custom"])
+            if style_preset == "Custom":
+                style = st.text_input("Custom style tag", value="",
+                                      placeholder="Describe your custom style...", key="style_custom")
+            else:
+                style = DEFAULT_STYLE
+        with c2:
+            img_model = st.selectbox("Image model",
+                                     _img_models(st.session_state.get("_settings_img_models")),
+                                     format_func=lambda x: x[0])
 
-    col3, col4 = st.columns(2)
-    with col3:
-        _tracks = sorted(glob.glob(f"{MUSIC_DIR}/*.mp3")) if os.path.isdir(MUSIC_DIR) else []
-        _track_labels = ["Off"] + [os.path.basename(t) for t in _tracks]
-        _track = st.selectbox("Music", _track_labels)
-        music_path = _tracks[_track_labels.index(_track) - 1] if _track != "Off" else None
-    with col4:
-        music_volume = st.slider("Music volume", 0.0, 1.0, 0.15, 0.01,
-                                 disabled=music_path is None)
-        lock_character = st.toggle("Lock character (fixed seed)")
-    if lock_character:
-        seed = st.session_state.setdefault("_seed", int.from_bytes(os.urandom(4), "big"))
-        st.caption(f"Seed {seed} — the same seed reproduces the same cast")
-    else:
-        seed = None
+            tracks = sorted(glob.glob(f"{MUSIC_DIR}/*.mp3")) if os.path.isdir(MUSIC_DIR) else []
+            track_labels = ["Off"] + [os.path.basename(t) for t in tracks]
+            track = st.selectbox("Music", track_labels)
+            music_path = tracks[track_labels.index(track) - 1] if track != "Off" else None
+            music_volume = st.slider("Music volume", 0.0, 1.0, 0.15, 0.01,
+                                     disabled=music_path is None)
 
-    # fingerprint of current inputs to detect changes
-    current_fp = {"source": source, "voice": voice_id, "img_model": img_model[1], "llm": llm_provider, "preset": style_preset, "custom_style": style if style_preset == "Custom" else "", "settings_fp": st.session_state.get("_settings_img_models", "") + st.session_state.get("_settings_ollama", "") + st.session_state.get("_settings_deepseek", "") + st.session_state.get("_settings_openrouter_llm", "") + st.session_state.get("_settings_kenari", "")}
-    inputs_changed = st.session_state.get("last_fp") != current_fp
-    has_estimate = st.session_state.get("script_result") is not None
-
-    if inputs_changed or not has_estimate:
-        if st.button("Estimate Cost", use_container_width=True) and source:
-            with st.spinner("Running LLM..."):
-                if "Ollama" in llm_provider:
-                    provider, llm_model = "ollama", st.session_state.get("_settings_ollama") or "llama3"
-                elif "DeepSeek" in llm_provider:
-                    provider, llm_model = "deepseek", st.session_state.get("_settings_deepseek") or "deepseek-v4-flash"
-                elif "Kenari" in llm_provider:
-                    provider, llm_model = "kenari", st.session_state.get("_settings_kenari") or "deepseek-v4-1-flash"
-                else:
-                    provider, llm_model = "openrouter", st.session_state.get("_settings_openrouter_llm") or "openai/gpt-4o-mini"
-                result = generate_script(source, provider=provider, model=llm_model)
-                st.session_state["script_result"] = result
-                st.session_state["last_fp"] = current_fp
-                st.rerun()
-    else:
-        result = st.session_state["script_result"]
-        imgs = len(result["image_prompts"])
-        label = img_model[0]
-        _default_ids = {"google/gemini-3.1-flash-lite-image", "x-ai/grok-imagine-image-quality", "google/gemini-3.1-flash-image", "google/gemini-3-pro-image", "stabilityai/sdxl-turbo"}
-        if img_model[2] == "kenari":
-            img_cost = round(imgs * KENARI_IMAGE_IDR.get(img_model[1], KENARI_IMAGE_IDR_DEFAULT) / IDR_PER_USD, 4)
-            cost_note = " (IDR)"
-        elif img_model[1] not in _default_ids:
-            img_cost = round(imgs * PRICES["openrouter_gemini_flash"], 4)
-            cost_note = " (est.)"
+        lock_character = st.toggle("Lock character (same seed every image)")
+        if lock_character:
+            seed = st.session_state.setdefault("_seed", int.from_bytes(os.urandom(4), "big"))
+            st.caption(f"Seed {seed} — reuse it to reproduce the same cast.")
         else:
-            model_key = {"Lite": "openrouter_gemini_lite", "Pro": "openrouter_gemini_pro",
-                         "Grok": "openrouter_grok_imagine"}.get(
-                next((k for k in ["Lite", "Pro", "Grok"] if k in label), ""), "openrouter_gemini_flash"
-            )
-            img_cost = 0 if img_model[2] == "local" else round(imgs * PRICES[model_key], 4)
-            cost_note = ""
-        tokens = result.get("_token_count", 0)
-        if "Ollama" in llm_provider:
-            llm_cost = 0
-        elif "Kenari" in llm_provider:
-            llm_cost = 0  # Indie plan covers chat; :free models cost nothing
-        else:
-            llm_key = "deepseek_llm" if "DeepSeek" in llm_provider else "openrouter_llm"
-            llm_cost = round(tokens * PRICES[llm_key], 4)
-        st.session_state["_llm_cost"] = llm_cost
-        total = img_cost + llm_cost
-        lines = [f"Images .......................... ${img_cost:.2f}{cost_note}"]
-        if llm_cost:
-            lines.append(f"LLM ............................. ${llm_cost:.2f}")
-        lines.append("-" * 40)
-        lines.append(f"Total ........................... ${total:.2f}")
-        st.code("\n".join(lines), language="text")
-        with st.expander("View generated script"):
-            st.write("**Narration:**")
-            st.write(result["narration"])
-            st.write("**Image prompts:**")
-            for i, p in enumerate(result["image_prompts"]):
-                st.write(f"{i+1}. {p}")
+            seed = None
 
-        if st.button("Generate Video", type="primary", use_container_width=True):
-            st.toast("Generating video...")
+        # --- estimate state -------------------------------------------------
+        # Only the inputs that change the *script* invalidate the estimate. The
+        # voice, image model, style and music are applied at render time, so
+        # changing them must not throw the generated script away.
+        fingerprint = {"source": source, "llm": llm_label, "model": llm_model}
+        result = st.session_state.get("script_result")
+        stale = result is not None and st.session_state.get("last_fp") != fingerprint
+
+        _section(4, "Cost and render",
+                 "Estimating runs the script model once. Nothing else is charged until you render.")
+        est_col, act_col = st.columns([2, 1])
+        with est_col:
+            if result is None:
+                st.info("Not estimated yet. Estimating writes the narration and image prompts.")
+            else:
+                if stale:
+                    st.warning("Your inputs changed since this estimate, so the script is out of date.")
+                imgs = len(result["image_prompts"])
+                img_cost, llm_cost, note = _estimate_costs(
+                    img_model, imgs, llm_label, result.get("_token_count", 0))
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Scenes", imgs)
+                m2.metric("Images", f"${img_cost:.2f}", help=note)
+                m3.metric("Script", "free" if not llm_cost else f"${llm_cost:.2f}")
+                st.caption(f"Estimated total **${img_cost + llm_cost:.2f}** · {note}")
+        with act_col:
+            if result is None or stale:
+                label = "Estimate script" if result is None else "Re-estimate script"
+                if st.button(label, type="primary", use_container_width=True) and source:
+                    with st.spinner("Running the script model..."):
+                        out = generate_script(source, provider=llm_provider, model=llm_model)
+                    st.session_state["script_result"] = out
+                    st.session_state["last_fp"] = fingerprint
+                    st.session_state["_llm_cost"] = _llm_cost_usd(
+                        llm_label, out.get("_token_count", 0))
+                    st.rerun()
+                if result is None and not source:
+                    st.caption("Add your story first.")
+            else:
+                if st.button("Render video", type="primary", use_container_width=True):
+                    st.session_state["_start_render"] = True
+                if st.button("Re-estimate", use_container_width=True):
+                    st.session_state.pop("script_result", None)
+                    st.rerun()
+
+        if result is not None:
+            with st.expander("Preview the generated script"):
+                st.write("**Narration**")
+                st.write(result["narration"])
+                st.write("**Image prompts**")
+                for i, p in enumerate(result["image_prompts"], 1):
+                    st.write(f"{i}. {p}")
+
+        # --- render ---------------------------------------------------------
+        if st.session_state.pop("_start_render", False) and result is not None:
             project_id = datetime.now().strftime("%Y-%m-%d_%H%M%S")
             out_dir = f"{PROJECTS_DIR}/{project_id}"
             os.makedirs(out_dir, exist_ok=True)
-            result = st.session_state["script_result"]
 
             prompts = result["image_prompts"]
             if style and "[INSERT" in style:
@@ -469,7 +656,7 @@ with tab_gen:
                 "image_prompts": prompts, "voice_id": voice_id,
                 "image_model": img_model[1], "image_model_label": img_model[0],
                 "image_provider": img_model[2],
-                "image_style": style, "llm_provider": llm_provider,
+                "image_style": style, "llm_provider": llm_label,
                 "seed": seed, "music": os.path.basename(music_path) if music_path else None,
                 "music_volume": music_volume,
                 "total_cost": st.session_state.get("_llm_cost", 0),
@@ -477,64 +664,48 @@ with tab_gen:
             }
             project["steps"]["script"] = {"status": "done"}
             _save_project(out_dir, project)
-            with open(f"{out_dir}/script.txt", "w") as f:
+            with open(f"{out_dir}/script.txt", "w", encoding="utf-8") as f:
                 f.write(result["narration"] + "\n\n")
                 for i, p in enumerate(prompts, 1):
                     f.write(f"{i}. {p}\n")
 
-            st.session_state["_clear_source"] = True
-            st.session_state["_clear_style"] = True
-            st.session_state["_clear_estimate"] = True
-
             status = st.empty()
             bar = st.progress(0)
-
+            stages = st.empty()
+            stages.markdown(_stages_html(project), unsafe_allow_html=True)
             try:
-                status.info("Generating audio...")
-                synthesize_edge(result["narration"], voice_id, f"{out_dir}/audio.mp3")
-                project["steps"]["audio"] = {"status": "done"}
-                _save_project(out_dir, project)
-                bar.progress(20)
-
-                status.info("Transcribing audio...")
-                words = transcribe(f"{out_dir}/audio.mp3")
-                json.dump(words, open(f"{out_dir}/transcript.json", "w"))
-                project["steps"]["transcribe"] = {"status": "done"}
-                _save_project(out_dir, project)
-                bar.progress(35)
-
-                def img_progress(i, n, action):
-                    pct = 35 + 45 * (i + 1) // n
-                    bar.progress(pct)
-                    status.info(f"Image {i+1}/{n}")
-
-                images, img_cost = generate_images(prompts, out_dir, img_model[1], provider=img_model[2], progress_cb=img_progress, seed=seed)
-                if len(images) != len(prompts):
-                    raise RuntimeError(f"Only {len(images)}/{len(prompts)} images generated. Check the image model.")
-                project["total_cost"] += img_cost
-                project["steps"]["images"] = {"status": "done"}
-                _save_project(out_dir, project)
-                bar.progress(80)
-
-                status.info("Assembling video...")
-                assemble(images, f"{out_dir}/audio.mp3", words, f"{out_dir}/final.mp4",
-                         music_path=music_path, music_volume=music_volume)
-                project["steps"]["assemble"] = {"status": "done"}
-                project["status"] = "completed"
-                _save_project(out_dir, project)
-                bar.progress(100)
+                _run_pipeline(project, out_dir, status, bar, stages)
+                st.session_state["_last_output"] = out_dir
+                st.session_state["_clear_source"] = True
+                st.session_state["_clear_estimate"] = True
                 st.toast("Video ready!")
-                status.success("Done!")
-                st.video(f"{out_dir}/final.mp4")
+                st.rerun()
             except Exception as e:
                 project["status"] = "failed"
                 _save_project(out_dir, project)
-                st.error(f"Pipeline failed: {e}")
-                st.info("Go to the Projects tab to resume.")
+                stages.markdown(_stages_html(project, failed=_active_stage(project)),
+                                unsafe_allow_html=True)
+                st.error(f"Render failed: {e}")
+                st.info("Nothing is lost — open the Projects tab and press Resume.")
 
+        # --- last result ----------------------------------------------------
+        last = st.session_state.get("_last_output")
+        if last and os.path.exists(f"{last}/final.mp4"):
+            _section(5, "Your video", os.path.basename(last))
+            vc1, vc2 = st.columns([1, 1])
+            with vc1:
+                st.video(f"{last}/final.mp4")
+            with vc2:
+                st.download_button("Download MP4", open(f"{last}/final.mp4", "rb"),
+                                   file_name=f"{os.path.basename(last)}.mp4")
+                proj = json.load(open(f"{last}/project.json"))
+                st.caption(f"**{len(proj.get('image_prompts', []))} scenes** · "
+                           f"${proj.get('total_cost', 0):.2f} · `{os.path.basename(last)}`")
+
+# --------------------------------------------------------------------------
+# Projects
+# --------------------------------------------------------------------------
 with tab_projects:
-    st.subheader("Projects")
-
     dirs = sorted([
         d for d in os.listdir(PROJECTS_DIR)
         if os.path.isdir(f"{PROJECTS_DIR}/{d}")
@@ -543,110 +714,107 @@ with tab_projects:
     ], reverse=True)
 
     if not dirs:
-        st.info("No projects yet. Go to Generate tab to create one.")
+        st.info("No projects yet. Create one in the Create tab.")
+    else:
+        projects = [(pid, _load_or_backfill(f"{PROJECTS_DIR}/{pid}")) for pid in dirs]
+        done_count = sum(1 for _, p in projects if p.get("status") == "completed")
+        spent = sum(p.get("total_cost", 0) or 0 for _, p in projects)
+        s1, s2, s3 = st.columns(3)
+        s1.metric("Projects", len(projects))
+        s2.metric("Completed", done_count)
+        s3.metric("Total spent", f"${spent:.2f}")
+        st.divider()
 
-    for pid in dirs:
-        proj = _load_or_backfill(f"{PROJECTS_DIR}/{pid}")
-        steps = proj.get("steps", {})
-        done = sum(1 for s in STEP_NAMES if steps.get(s, {}).get("status") == "done")
-        pct = int(done / len(STEP_NAMES) * 100)
-        icon = {"completed": "\u2705", "failed": "\u274c", "in_progress": "\u23f3"}.get(proj.get("status"), "\u2753")
-        cost = proj.get("total_cost", 0)
+        cols = st.columns(3)
+        for i, (pid, proj) in enumerate(projects):
+            with cols[i % 3]:
+                steps = proj.get("steps", {})
+                done = sum(1 for s in STEP_NAMES if steps.get(s, {}).get("status") == "done")
+                pct = int(done / len(STEP_NAMES) * 100)
+                status = proj.get("status")
+                badge = {"completed": "Ready", "failed": "Failed", "in_progress": "Unfinished"}.get(status, "Unknown")
 
-        with st.expander(f"**{icon} {pid}**  \u2014  {pct}%  \u2022  ${cost:.2f}"):
-            col1, col2 = st.columns(2)
-            with col1:
-                audio_path = f"{PROJECTS_DIR}/{pid}/audio.mp3"
-                if os.path.exists(audio_path):
-                    st.audio(audio_path)
-                imgs = sorted(glob.glob(f"{PROJECTS_DIR}/{pid}/img_*.png"))
-                if imgs:
-                    _cols = st.columns(3)
-                    for _i, _img in enumerate(imgs):
-                        with _cols[_i % 3]:
-                            st.image(_img)
-            with col2:
                 video_path = f"{PROJECTS_DIR}/{pid}/final.mp4"
+                images = sorted(glob.glob(f"{PROJECTS_DIR}/{pid}/img_*.png"))
                 if os.path.exists(video_path):
                     st.video(video_path)
+                elif images:
+                    st.image(images[0])
+                else:
+                    st.caption("No preview")
 
-            if proj.get("status") in ("failed", "in_progress"):
-                if st.button("Resume", key=f"resume_{pid}"):
-                    out_dir = f"{PROJECTS_DIR}/{pid}"
-                    proj = _load_or_backfill(out_dir)
-                    steps = proj["steps"]
+                st.markdown(
+                    f'<div class="proj-title">{badge} · {pct}%</div>'
+                    f'<div class="proj-meta">{pid} · ${proj.get("total_cost", 0) or 0:.2f}</div>',
+                    unsafe_allow_html=True,
+                )
+                st.progress(pct / 100)
 
-                    status = st.empty()
-                    bar = st.progress(0)
-                    words = None
+                b1, b2 = st.columns(2)
+                with b1:
+                    if status in ("failed", "in_progress"):
+                        if st.button("Resume", key=f"resume_{pid}", use_container_width=True):
+                            st.session_state["_resume_pid"] = pid
+                with b2:
+                    if os.path.exists(video_path):
+                        st.download_button("Download", open(video_path, "rb"),
+                                           file_name=f"{pid}.mp4", key=f"dl_{pid}",
+                                           use_container_width=True)
+                with st.expander("Details"):
+                    if os.path.exists(f"{PROJECTS_DIR}/{pid}/audio.mp3"):
+                        st.audio(f"{PROJECTS_DIR}/{pid}/audio.mp3")
+                    st.markdown(_stages_html(proj), unsafe_allow_html=True)
+                    st.caption(f"Model: {proj.get('image_model_label') or '—'}")
+                    st.caption(f"Music: {proj.get('music') or 'none'}")
+                    if proj.get("seed"):
+                        st.caption(f"Seed: {proj['seed']}")
+                    if st.button("Delete project", key=f"del_{pid}", use_container_width=True):
+                        shutil.rmtree(f"{PROJECTS_DIR}/{pid}")
+                        st.rerun()
 
-                    try:
-                        if steps.get("audio", {}).get("status") != "done":
-                            status.info("Generating audio...")
-                            synthesize_edge(proj["narration"], proj["voice_id"], f"{out_dir}/audio.mp3")
-                            steps["audio"] = {"status": "done"}
-                            _save_project(out_dir, proj)
-                        bar.progress(20)
-
-                        if steps.get("transcribe", {}).get("status") != "done":
-                            status.info("Transcribing audio...")
-                            words = transcribe(f"{out_dir}/audio.mp3")
-                            json.dump(words, open(f"{out_dir}/transcript.json", "w"))
-                            steps["transcribe"] = {"status": "done"}
-                            _save_project(out_dir, proj)
-                        else:
-                            words = json.load(open(f"{out_dir}/transcript.json"))
-                        bar.progress(35)
-
-                        if steps.get("images", {}).get("status") != "done":
-                            prompts = proj["image_prompts"]
-
-                            def img_progress(i, n, action):
-                                pct = 35 + 45 * (i + 1) // n
-                                bar.progress(pct)
-                                status.info(f"Image {i+1}/{n}")
-
-                            _prov = proj.get("image_provider") or "openrouter"
-                            if _prov == "local":
-                                raise RuntimeError(
-                                    "This project was generated with a local image model, which "
-                                    "cannot be resumed from the UI yet. Re-run it from the Generate tab."
-                                )
-                            images, img_cost = generate_images(prompts, out_dir, proj["image_model"], provider=_prov, progress_cb=img_progress, seed=proj.get("seed"))
-                            if len(images) != len(prompts):
-                                raise RuntimeError(f"Only {len(images)}/{len(prompts)} images generated. Check the image model.")
-                            proj["total_cost"] = proj.get("total_cost", 0) + img_cost
-                            steps["images"] = {"status": "done"}
-                            _save_project(out_dir, proj)
-                        else:
-                            images = sorted(glob.glob(f"{out_dir}/img_*.png"))
-                            expected = len(proj.get("image_prompts", []))
-                            images = [p for p in images if os.path.getsize(p) > 0]
-                            if len(images) != expected:
-                                steps["images"] = {"status": "pending"}
-                                _save_project(out_dir, proj)
-                                st.rerun()
-                        bar.progress(80)
-
-                        if steps.get("assemble", {}).get("status") != "done":
-                            status.info("Assembling video...")
-                            if not images:
-                                raise RuntimeError("No valid images to assemble")
-                            assemble(images, f"{out_dir}/audio.mp3", words, f"{out_dir}/final.mp4",
-                                     music_path=_resume_music(proj), music_volume=proj.get("music_volume", 0.15))
-                            steps["assemble"] = {"status": "done"}
-                            proj["status"] = "completed"
-                            _save_project(out_dir, proj)
-                        bar.progress(100)
-                        st.toast("Video ready!")
-                        st.success("Resumed! Video saved.")
-                    except Exception as e:
-                        proj["status"] = "failed"
-                        _save_project(out_dir, proj)
-                        import traceback
-                        st.error(f"Resume failed: {e}")
-                        st.code(traceback.format_exc())
-
-            if st.button("Delete project", key=f"del_{pid}"):
-                shutil.rmtree(f"{PROJECTS_DIR}/{pid}")
+        # --- resume ---------------------------------------------------------
+        if st.session_state.get("_resume_pid"):
+            pid = st.session_state.pop("_resume_pid")
+            out_dir = f"{PROJECTS_DIR}/{pid}"
+            proj = _load_or_backfill(out_dir)
+            status = st.empty()
+            bar = st.progress(0)
+            stages = st.empty()
+            stages.markdown(_stages_html(proj), unsafe_allow_html=True)
+            try:
+                _run_pipeline(proj, out_dir, status, bar, stages)
+                st.session_state["_last_output"] = out_dir
+                st.toast("Video ready!")
                 st.rerun()
+            except Exception as e:
+                proj["status"] = "failed"
+                _save_project(out_dir, proj)
+                stages.markdown(_stages_html(proj, failed=_active_stage(proj)),
+                                unsafe_allow_html=True)
+                st.error(f"Resume failed: {e}")
+
+# --------------------------------------------------------------------------
+# Settings
+# --------------------------------------------------------------------------
+with tab_settings:
+    left, mid, right = st.columns([1, 3, 1])
+    with mid:
+        _section("", "API keys", "Read from .env at startup. Restart the app after editing.")
+        for provider, (env, name, url) in API_KEYS.items():
+            present = bool(os.getenv(env))
+            st.markdown(f"{'✅' if present else '⚠️'} **{name}** — "
+                        f"{'connected' if present else f'not set · [{url}]({url})'}")
+
+        _section("", "Script models", "Defaults used when a provider is selected.")
+        st.text_input("Ollama", value=DEFAULT_MODELS["ollama"], key="_settings_ollama")
+        st.text_input("DeepSeek", value=DEFAULT_MODELS["deepseek"], key="_settings_deepseek")
+        st.text_input("Kenari", value=DEFAULT_MODELS["kenari"], key="_settings_kenari")
+        st.text_input("OpenRouter", value=DEFAULT_MODELS["openrouter"], key="_settings_openrouter_llm")
+
+        _section("", "Extra image models", "One OpenRouter model ID per line.")
+        st.text_area("custom image models", placeholder="black-forest-labs/flux-1.1-pro",
+                     label_visibility="collapsed", key="_settings_img_models")
+
+        _section("", "Storage")
+        st.caption(f"Projects live in `{os.path.abspath(PROJECTS_DIR)}`")
+        st.caption(f"Music tracks are read from `{MUSIC_DIR}`")
