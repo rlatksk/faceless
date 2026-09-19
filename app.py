@@ -229,6 +229,7 @@ div[data-testid="stPopoverBody"] .stCaption {
 """
 
 
+
 def _save_project(path, data):
     with open(f"{path}/project.json", "w") as f:
         json.dump(data, f, indent=2)
@@ -331,6 +332,7 @@ with tab_gen:
             ("Grok Imagine 1K \u2014 ~$0.05/img",          "x-ai/grok-imagine-image-quality",     "openrouter"),
             ("Gemini 3.1 Flash \u2014 ~$0.07/img",         "google/gemini-3.1-flash-image",       "openrouter"),
             ("Gemini 3 Pro \u2014 ~$0.14/img",             "google/gemini-3-pro-image",           "openrouter"),
+            ("Local SDXL \u2014 Free (10 steps)",             "stabilityai/stable-diffusion-xl-base-1.0__10", "local"),
             ("Local SDXL Turbo \u2014 Free",               "stabilityai/sdxl-turbo",              "local"),
         ]
         _custom_raw = st.session_state.get("_settings_img_models", "")
@@ -487,6 +489,8 @@ with tab_gen:
                 st.info("Go to the Projects tab to resume.")
 
 with tab_projects:
+    st.subheader("Projects")
+
     dirs = sorted([
         d for d in os.listdir(PROJECTS_DIR)
         if os.path.isdir(f"{PROJECTS_DIR}/{d}")
@@ -513,7 +517,10 @@ with tab_projects:
                     st.audio(audio_path)
                 imgs = sorted(glob.glob(f"{PROJECTS_DIR}/{pid}/img_*.png"))
                 if imgs:
-                    st.image(imgs, width=120)
+                    _cols = st.columns(3)
+                    for _i, _img in enumerate(imgs):
+                        with _cols[_i % 3]:
+                            st.image(_img)
             with col2:
                 video_path = f"{PROJECTS_DIR}/{pid}/final.mp4"
                 if os.path.exists(video_path):
@@ -522,7 +529,7 @@ with tab_projects:
             if proj.get("status") in ("failed", "in_progress"):
                 if st.button("Resume", key=f"resume_{pid}"):
                     out_dir = f"{PROJECTS_DIR}/{pid}"
-                    proj = json.load(open(f"{out_dir}/project.json"))
+                    proj = _load_or_backfill(out_dir)
                     steps = proj["steps"]
 
                     status = st.empty()
@@ -563,10 +570,18 @@ with tab_projects:
                             _save_project(out_dir, proj)
                         else:
                             images = sorted(glob.glob(f"{out_dir}/img_*.png"))
+                            expected = len(proj.get("image_prompts", []))
+                            images = [p for p in images if os.path.getsize(p) > 0]
+                            if len(images) != expected:
+                                steps["images"] = {"status": "pending"}
+                                _save_project(out_dir, proj)
+                                st.rerun()
                         bar.progress(80)
 
                         if steps.get("assemble", {}).get("status") != "done":
                             status.info("Assembling video...")
+                            if not images:
+                                raise RuntimeError("No valid images to assemble")
                             assemble(images, f"{out_dir}/audio.mp3", words, f"{out_dir}/final.mp4")
                             steps["assemble"] = {"status": "done"}
                             proj["status"] = "completed"
@@ -577,7 +592,9 @@ with tab_projects:
                     except Exception as e:
                         proj["status"] = "failed"
                         _save_project(out_dir, proj)
+                        import traceback
                         st.error(f"Resume failed: {e}")
+                        st.code(traceback.format_exc())
 
             if st.button("Delete project", key=f"del_{pid}"):
                 shutil.rmtree(f"{PROJECTS_DIR}/{pid}")

@@ -2,13 +2,20 @@ import base64
 import os
 
 import requests
+from dotenv import load_dotenv
+
+load_dotenv()
+hf_home = os.environ.get("HF_HOME")
+if hf_home:
+    os.environ["HF_HOME"] = hf_home
+    os.environ["HUGGINGFACE_HUB_CACHE"] = os.path.join(hf_home, "hub")
 
 _pipe = None
 
 
 def generate_images(prompts, output_dir, model, provider="openrouter", progress_cb=None):
     if provider == "local":
-        return _generate_local(prompts, output_dir, model, progress_cb) + (0.0,)
+        return _generate_local(prompts, output_dir, model, progress_cb), 0.0
     return _generate_openrouter(prompts, output_dir, model, progress_cb)
 
 
@@ -41,17 +48,19 @@ def _generate_openrouter(prompts, output_dir, model, progress_cb=None):
             paths.append(path)
             total_cost += data.get("usage", {}).get("cost", 0)
         except requests.RequestException as e:
-            raise RuntimeError(f"OpenRouter image gen failed for prompt {i}: {e}")
+            body = e.response.text if e.response is not None else "no response"
+            raise RuntimeError(f"OpenRouter image gen failed for prompt {i}: {e} — {body}")
     return paths, round(total_cost, 4)
 
 
 def _generate_local(prompts, output_dir, model, progress_cb=None):
     global _pipe
+    model_id = model.split("__", 1)[0]
     if _pipe is None:
         import torch
         from diffusers import AutoPipelineForText2Image
         _pipe = AutoPipelineForText2Image.from_pretrained(
-            model, torch_dtype=torch.float32,
+            model_id, torch_dtype=torch.float32,
         )
         _pipe.to("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -64,9 +73,13 @@ def _generate_local(prompts, output_dir, model, progress_cb=None):
         if progress_cb:
             progress_cb(i, len(prompts), "Generating")
         try:
-            turbo = "turbo" in model or "sdxl-turbo" in model
-            steps = 4 if turbo else 30
-            guidance = 0.0 if turbo else 7.5
+            if "__" in model:
+                steps = int(model.split("__", 1)[1])
+                guidance = 7.5
+            else:
+                turbo = "turbo" in model or "sdxl-turbo" in model
+                steps = 4 if turbo else 30
+                guidance = 0.0 if turbo else 7.5
             images = _pipe(prompt=prompt, num_inference_steps=steps, guidance_scale=guidance).images
             images[0].save(path)
             paths.append(path)

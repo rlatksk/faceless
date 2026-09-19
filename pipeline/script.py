@@ -35,7 +35,7 @@ def _ollama_script(prompt, model):
         raise RuntimeError(f"Ollama returned invalid JSON: {e}")
 
 
-def _deepseek_script(prompt, model="deepseek-chat"):
+def _deepseek_script(prompt, model="deepseek-v4-flash"):
     return _chat_script(prompt, model, "DeepSeek", "DEEPSEEK_API_KEY",
                         "https://api.deepseek.com/v1/chat/completions")
 
