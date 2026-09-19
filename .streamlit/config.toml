@@ -1,11 +1,13 @@
 [browser]
 gatherUsageStats = false
 
+# Keep in sync with the :root palette in the _CSS block of app.py. These values
+# theme Streamlit's own widgets (radio dots, sliders, toggles, checkboxes), which
+# CSS cannot fully reach.
 [theme]
 base = "dark"
-primaryColor = "#ff3333"
-backgroundColor = "#080808"
-secondaryBackgroundColor = "#121212"
-textColor = "#e8e4d8"
-font = "sans serif"
-
+primaryColor = "#ffb000"
+backgroundColor = "#050705"
+secondaryBackgroundColor = "#0a0d0a"
+textColor = "#cfe3cf"
+font = "monospace"

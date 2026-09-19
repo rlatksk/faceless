@@ -73,186 +73,302 @@ def _setting(provider):
 
 
 _CSS = """
-@import url('https://fonts.googleapis.com/css2?family=Teko:wght@400;600;700&family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Share+Tech+Mono&display=swap');
 
-.stApp {
-    background: #000;
+/* Phosphor terminal theme. Every colour is a variable so the palette lives in
+   one place — the previous sheet hardcoded its accent in eleven rules, which
+   made any restyle a find-and-replace. */
+:root {
+    --bg: #050705;
+    --surface: #0a0d0a;
+    --surface-2: #0d120d;
+    --line: #1c241c;
+    --line-bright: #2b3a2b;
+    --amber: #ffb000;
+    --amber-dim: #b37b00;
+    --amber-glow: rgba(255, 176, 0, 0.35);
+    --green: #4ee06a;
+    --red: #ff5b4a;
+    --text: #cfe3cf;
+    /* Contrast measured against --bg: --text-dim 8.4, --text-faint 4.9.
+       The first pass had faint at 2.65, which failed WCAG AA for small text —
+       inactive tabs and card metadata were genuinely hard to read. */
+    --text-dim: #9db09d;
+    --text-faint: #7f917f;
 }
 
-/* film grain overlay */
+.stApp {
+    background: var(--bg);
+    color: var(--text);
+}
+
+/* Phosphor screen texture: a faint scanline grid plus a slow vertical drift,
+   and a subtle vignette so the edges fall off like a CRT. Static grid, animated
+   sweep — the sweep is slow enough (8s) to read as ambience, not motion. */
 .stApp::before {
     content: '';
     position: fixed;
     inset: 0;
-    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-    background-repeat: repeat;
-    background-size: 256px 256px;
-    opacity: 0.035;
+    background-image: repeating-linear-gradient(
+        0deg,
+        rgba(0, 0, 0, 0.22) 0px,
+        rgba(0, 0, 0, 0.22) 1px,
+        transparent 1px,
+        transparent 3px
+    );
+    pointer-events: none;
+    z-index: 9998;
+}
+
+.stApp::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: linear-gradient(
+        180deg,
+        transparent 0%,
+        rgba(255, 176, 0, 0.035) 48%,
+        rgba(255, 176, 0, 0.05) 50%,
+        rgba(255, 176, 0, 0.035) 52%,
+        transparent 100%
+    );
+    background-size: 100% 220px;
+    animation: sweep 8s linear infinite;
     pointer-events: none;
     z-index: 9999;
 }
 
-h1 {
-    font-family: 'Teko', sans-serif;
-    font-weight: 700;
-    font-size: 3rem !important;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    line-height: 1;
-    margin-bottom: 0;
+@keyframes sweep {
+    from { background-position: 0 -220px; }
+    to   { background-position: 0 100vh; }
 }
 
-h2, h3 {
-    font-family: 'Teko', sans-serif;
+@media (prefers-reduced-motion: reduce) {
+    .stApp::after { animation: none; }
+}
+
+/* Streamlit ships its own heading rules (.st-bp etc.) with equal specificity that
+   load after this sheet, so bare `h1` loses. Scoping under .stApp outranks them
+   without !important. */
+.stApp h1 {
+    font-family: 'Share Tech Mono', monospace !important;
+    font-weight: 400;
+    font-size: 2.6rem !important;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    line-height: 1;
+    margin-bottom: 0;
+    color: var(--amber) !important;
+    text-shadow: 0 0 12px var(--amber-glow);
+}
+
+.stApp h2, .stApp h3 {
+    font-family: 'IBM Plex Mono', monospace !important;
     font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.08em;
 }
 
 /* numbered section heading inside the create form */
 .step-head {
-    font-family: 'Teko', sans-serif;
+    font-family: 'IBM Plex Mono', monospace;
     font-weight: 600;
-    font-size: 1.15rem;
+    font-size: 0.9rem;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: #ff2b2b;
-    margin: 0.5rem 0 0.25rem;
+    letter-spacing: 0.14em;
+    color: var(--amber);
+    margin: 0.75rem 0 0.2rem;
 }
 .step-head span {
-    color: #444;
+    color: var(--text-faint);
     margin-right: 0.5rem;
 }
 .step-note {
-    font-family: 'Inter', sans-serif;
-    font-size: 0.75rem;
-    color: #666;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.72rem;
+    color: var(--text-dim);
     margin: 0 0 0.75rem;
+    line-height: 1.5;
 }
 
 .stTabs [data-baseweb="tab-list"] {
     gap: 0;
-    border-bottom: 2px solid #1a1a1a;
+    border-bottom: 1px solid var(--line-bright);
 }
 
 .stTabs [data-baseweb="tab"] {
-    font-family: 'Teko', sans-serif;
+    font-family: 'IBM Plex Mono', monospace;
     font-weight: 600;
-    font-size: 1rem;
+    font-size: 0.82rem;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: #555;
+    letter-spacing: 0.14em;
+    color: var(--text-faint);
     padding: 0.5rem 1.5rem;
+    transition: color 0.15s, text-shadow 0.15s;
+}
+
+.stTabs [data-baseweb="tab"]:hover {
+    color: var(--amber-dim);
 }
 
 .stTabs [aria-selected="true"] {
-    color: #ff2b2b !important;
+    color: var(--amber) !important;
+    text-shadow: 0 0 10px var(--amber-glow);
 }
 
 div[data-testid="stButton"] > button {
-    font-family: 'Inter', sans-serif;
+    font-family: 'IBM Plex Mono', monospace;
     font-weight: 600;
-    letter-spacing: 0.04em;
-    border-radius: 2px;
+    letter-spacing: 0.1em;
+    border-radius: 0;
     transition: all 0.15s;
-    font-size: 0.8rem;
+    font-size: 0.75rem;
 }
 
 div[data-testid="stButton"] > button[kind="primary"] {
-    background: #ff2b2b;
-    border: none;
-    color: #fff;
-    font-size: 0.9rem;
+    background: transparent;
+    border: 1px solid var(--amber);
+    color: var(--amber);
+    font-size: 0.82rem;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.14em;
+    text-shadow: 0 0 8px var(--amber-glow);
 }
 
 div[data-testid="stButton"] > button[kind="primary"]:hover {
-    background: #cc0000;
-    box-shadow: none;
+    background: var(--amber);
+    color: #050705;
+    text-shadow: none;
+    box-shadow: 0 0 18px var(--amber-glow);
 }
 
 div[data-testid="stButton"] > button:not([kind="primary"]) {
     background: transparent;
-    border: 1px solid #333;
-    color: #888;
+    border: 1px solid var(--line-bright);
+    color: var(--text-dim);
     text-transform: uppercase;
 }
 
 div[data-testid="stButton"] > button:not([kind="primary"]):hover {
-    border-color: #ff2b2b;
-    color: #ff2b2b;
+    border-color: var(--amber-dim);
+    color: var(--amber);
     background: transparent;
 }
 
 /* card-like containers */
 div[data-testid="stExpander"] {
-    border: 1px solid #1a1a1a;
-    border-radius: 2px;
-    background: #0a0a0a;
+    border: 1px solid var(--line);
+    border-radius: 0;
+    background: var(--surface);
     margin-bottom: 0.75rem;
 }
 
 div[data-testid="stExpander"] summary {
-    font-family: 'Inter', sans-serif;
+    font-family: 'IBM Plex Mono', monospace;
     font-weight: 500;
 }
 
 div[data-testid="stExpander"] summary span {
-    font-size: 0.85rem;
+    font-size: 0.78rem;
 }
 
 .stTextArea textarea, div[data-testid="stTextInput"] input {
-    background: #0a0a0a;
-    border: 1px solid #1a1a1a;
-    border-radius: 2px;
-    font-family: 'Inter', sans-serif;
-    font-size: 0.9rem;
-    color: #f5f5f5;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 0;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.82rem;
+    color: var(--text);
+    line-height: 1.6;
 }
 
 .stTextArea textarea:focus, div[data-testid="stTextInput"] input:focus {
-    border-color: #ff2b2b;
-    box-shadow: none;
+    border-color: var(--amber-dim);
+    box-shadow: 0 0 0 1px var(--amber-glow);
 }
 
 .stTextArea textarea::placeholder {
-    color: #444;
+    color: var(--text-faint);
 }
 
 div[data-testid="stRadio"] label {
-    font-family: 'Inter', sans-serif;
-    font-size: 0.8rem;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.75rem;
 }
 
 div[role="progressbar"] > div {
-    background: #ff2b2b !important;
-    border-radius: 1px;
+    background: var(--amber) !important;
+    border-radius: 0;
+    box-shadow: 0 0 8px var(--amber-glow);
 }
 
 div[role="progressbar"] {
-    background: #1a1a1a !important;
-    border-radius: 1px;
+    background: var(--line) !important;
+    border-radius: 0;
 }
 
+/* Streamlit ships cool blue/green/red alert palettes. Retint them so the page
+   stays monochrome — the stock blue info banner was the one cool hue left. */
 div[role="alert"] {
-    border-left: 3px solid #ff2b2b;
+    border-left: 2px solid var(--amber);
     border-radius: 0;
-    background: #0a0a0a;
+    background: var(--surface);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.78rem;
+    color: var(--text);
+}
+div[data-testid="stAlertContainer"] {
+    background: var(--surface) !important;
+    border: 1px solid var(--line);
+    border-left: 2px solid var(--amber);
+    border-radius: 0;
+    color: var(--text) !important;
+}
+div[data-testid="stAlertContainer"] p,
+div[data-testid="stAlertContainer"] span {
+    color: var(--text) !important;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.78rem;
+}
+div[data-testid="stNotification"] {
+    background: var(--surface) !important;
+    border: 1px solid var(--line-bright);
+    color: var(--text) !important;
+    font-family: 'IBM Plex Mono', monospace;
+    border-radius: 0;
+}
+div[data-testid="stToast"] {
+    background: var(--surface) !important;
+    border: 1px solid var(--amber-dim);
+    color: var(--amber) !important;
+    font-family: 'IBM Plex Mono', monospace;
+    border-radius: 0;
+}
+/* Widget labels (Voice, Style, Image model…) inherit the terminal type. */
+div[data-testid="stWidgetLabel"] p, div[data-testid="stWidgetLabel"] span {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.74rem;
+    color: var(--text-dim);
+    letter-spacing: 0.04em;
+}
+div[data-testid="stCaptionContainer"] p {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.72rem;
+    color: var(--text-dim);
 }
 
 .stCodeBlock {
-    background: #0a0a0a !important;
-    border: 1px solid #1a1a1a;
-    border-radius: 2px;
+    background: var(--surface) !important;
+    border: 1px solid var(--line);
+    border-radius: 0;
 }
 
 .stSelectBox [data-baseweb="select"] {
-    border-radius: 2px;
+    border-radius: 0;
 }
 
 .stSpinner {
-    color: #ff2b2b;
+    color: var(--amber);
 }
 
 /* stage chips — the live pipeline view */
@@ -263,48 +379,68 @@ div[role="alert"] {
     margin: 0.25rem 0 0.75rem;
 }
 .stage {
-    font-family: 'Inter', sans-serif;
-    font-size: 0.7rem;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.66rem;
     text-transform: uppercase;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.1em;
     padding: 3px 10px;
-    border: 1px solid #1e1e1e;
-    border-radius: 2px;
-    color: #555;
+    border: 1px solid var(--line);
+    border-radius: 0;
+    color: var(--text-faint);
     white-space: nowrap;
 }
-.stage.done { border-color: #1f5c2e; color: #4ade80; }
-.stage.active { border-color: #ff2b2b; color: #ff2b2b; }
-.stage.failed { border-color: #7a1f1f; color: #ff5555; }
+.stage.done {
+    border-color: #1f5c2e;
+    color: var(--green);
+}
+/* The active stage is the one thing worth animating: a slow pulse reads as
+   "working" without competing with the video. */
+.stage.active {
+    border-color: var(--amber);
+    color: var(--amber);
+    animation: pulse 1.6s ease-in-out infinite;
+}
+@keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 rgba(255, 176, 0, 0); }
+    50%      { box-shadow: 0 0 12px var(--amber-glow); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .stage.active { animation: none; box-shadow: 0 0 12px var(--amber-glow); }
+}
+.stage.failed {
+    border-color: #7a2a24;
+    color: var(--red);
+}
 
 /* live progress panel */
 .prog-detail {
     display: flex;
     justify-content: space-between;
     gap: 1rem;
-    font-family: 'Inter', sans-serif;
-    font-size: 0.78rem;
-    color: #888;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.74rem;
+    color: var(--text-dim);
     margin: -0.35rem 0 0.6rem;
 }
 .prog-time {
-    color: #555;
+    color: var(--amber-dim);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
 }
 
 /* project gallery cards */
 .proj-title {
-    font-family: 'Inter', sans-serif;
-    font-size: 0.8rem;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.74rem;
     font-weight: 600;
-    color: #f5f5f5;
+    color: var(--text);
     margin: 0.35rem 0 0.1rem;
+    letter-spacing: 0.04em;
 }
 .proj-meta {
-    font-family: 'Inter', sans-serif;
-    font-size: 0.7rem;
-    color: #666;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.68rem;
+    color: var(--text-faint);
     margin-bottom: 0.35rem;
 }
 
@@ -338,9 +474,9 @@ div[data-testid="stLayoutWrapper"]:has(> [class*="st-key-projcard_"]) {
     overflow: hidden;
     display: flex;
     flex-direction: column;
-    border: 1px solid #1a1a1a;
-    border-radius: 2px;
-    background: #0a0a0a;
+    border: 1px solid var(--line);
+    border-radius: 0;
+    background: var(--surface);
     padding: 0.7rem;
     box-sizing: border-box;
 }
@@ -365,16 +501,16 @@ div[data-testid="stLayoutWrapper"]:has(> [class*="st-key-projcard_"]) {
 .proj-empty {
     height: 250px;
     margin-bottom: 0.5rem;
-    border: 1px dashed #222;
-    border-radius: 2px;
+    border: 1px dashed var(--line-bright);
+    border-radius: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #444;
-    font-family: 'Inter', sans-serif;
-    font-size: 0.75rem;
+    color: var(--text-faint);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.7rem;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.12em;
 }
 /* The expander sits last; the card already stretches to the row height, so the
    actions line up without pushing the content apart. `margin-top: auto` here
@@ -388,9 +524,9 @@ div[data-testid="stLayoutWrapper"]:has(> [class*="st-key-projcard_"]) {
 
 /* settings popover */
 div[data-testid="stPopoverBody"] {
-    background: #0a0a0a;
-    border: 1px solid #1a1a1a;
-    border-radius: 2px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 0;
     min-width: 280px;
 }
 """
@@ -646,8 +782,9 @@ col_h, col_s = st.columns([5, 1])
 with col_h:
     st.markdown(
         '<h1 style="margin-bottom:0">FACELESS</h1>'
-        '<p style="font-family:Inter,sans-serif;font-size:0.75rem;color:#555;'
-        'letter-spacing:0.15em;text-transform:uppercase;margin-top:-0.25rem">'
+        '<p style="font-family:\'IBM Plex Mono\',monospace;font-size:0.68rem;'
+        'color:var(--text-dim);'
+        'letter-spacing:0.22em;text-transform:uppercase;margin-top:-0.15rem">'
         'vertical video generator</p>',
         unsafe_allow_html=True,
     )
