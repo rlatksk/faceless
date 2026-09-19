@@ -9,8 +9,18 @@ def generate_script(source_text, provider="ollama", model="llama3"):
 
 Source: {source_text}
 
-Return JSON: {{"narration": "voiceover text", "image_prompts": ["prompt1", "prompt2", ...]}}
-Each image_prompt describes one scene for AI image generation.
+Return JSON:
+{{"narration": "voiceover text",
+  "characters": [{{"name": "short name", "description": "fixed visual description"}}],
+  "image_prompts": ["prompt1", "prompt2", ...]}}
+
+"characters" lists every recurring person in the story. Each description must be a fixed,
+concrete visual spec that can be reused verbatim for every scene: apparent age, hair colour
+and style, build, and the clothing they wear throughout. Invent plausible specifics where the
+source does not say, then never vary them. Do not list one-off background people.
+
+Each image_prompt describes one scene for AI image generation, and must refer to characters
+by the name from "characters" rather than re-describing them, so the description stays fixed.
 
 Describe only what is IN the scene: the subjects, their expressions and body language, the
 setting, and the action. Do not name an art style, medium, rendering technique, lighting
@@ -58,6 +68,22 @@ def _kenari_script(prompt, model):
                         "https://kenari.id/v1/chat/completions")
 
 
+def _parse_json(content, name):
+    """Parse the model's JSON, tolerating a ```json fence around it.
+
+    Models frequently wrap the object in a fenced block even when asked for bare
+    JSON, which json.loads rejects outright.
+    """
+    text = content.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1] if "\n" in text else text
+        text = text.rsplit("```", 1)[0]
+    try:
+        return json.loads(text.strip())
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"{name} returned invalid JSON: {e}")
+
+
 def _chat_script(prompt, model, name, env_key, url):
     api_key = os.environ.get(env_key)
     if not api_key:
@@ -72,10 +98,10 @@ def _chat_script(prompt, model, name, env_key, url):
         resp.raise_for_status()
         data = resp.json()
         content = data["choices"][0]["message"]["content"]
-        result = json.loads(content)
+        result = _parse_json(content, name)
         result["_token_count"] = data["usage"]["total_tokens"]
         return result
     except requests.RequestException as e:
         raise RuntimeError(f"{name} API error: {e}")
-    except (json.JSONDecodeError, KeyError) as e:
+    except KeyError as e:
         raise RuntimeError(f"{name} returned invalid response: {e}")
