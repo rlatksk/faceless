@@ -32,7 +32,11 @@ There is no database and no in-memory run state. Any stage can be re-entered fro
 
 **Image generation is concurrent on the HTTP providers.** `_run_parallel` in `images.py` fans prompts out over a `ThreadPoolExecutor` capped at `MAX_WORKERS` (4). `_generate_local` stays serial — the diffusers pipeline is not thread-safe. Progress is reported as a completion *count* under a lock, never a prompt index, so out-of-order finishes cannot make the bar go backwards. Worker threads get the Streamlit script context via `_attach_script_ctx()` before touching a widget. The first failure propagates, matching the old serial behaviour.
 
-**Resume is a file-existence heuristic.** `_load_or_backfill` (`app.py:238-270`) infers each step's status from which artifacts exist, then rewrites `project.json`. It runs for every project on every render of the Projects tab.
+**Resume is a file-existence heuristic.** `_load_or_backfill` infers each step's status from which artifacts exist, then rewrites `project.json`. It runs for every project on every render of the Projects tab.
+
+**The UI is three tabs and one pipeline function.** Create / Projects / Settings. Create is four numbered sections (story, script, look and sound, cost and render). Both the first render and Resume funnel into `_run_pipeline(project, out_dir, status, bar, stages)`, which runs every stage not already done and persists each before starting the next — so a fresh project (all pending) runs all five, and a resumed one continues. Never fork that into two copies.
+
+**Estimate staleness is scoped to script inputs.** `last_fp` covers only the source text and the script model, because the voice, image model, style, music and seed are all applied at render time. Adding a script-affecting input means adding it to that fingerprint; adding a render-time one must not.
 
 **Two process-global caches**, both intentional and both unbounded in lifetime: `_pipe` in `images.py:13` (diffusers pipeline, loaded lazily on first local generation) and `model` in `transcribe.py:5` (`WhisperModel`, loaded at *import* time). Importing `pipeline.transcribe` triggers a model download.
 
@@ -126,7 +130,7 @@ Everything else is I/O-bound and its correctness shows up in the produced artifa
 streamlit run app.py
 ```
 
-Then walk the affected path in the UI. The cheapest end-to-end check is the Generate tab with the Ollama provider (free, no API key) and the local SDXL Turbo image model (free). For a stage in isolation, import and call it against an existing `output/<run>/` directory — the artifacts on disk are the real fixtures.
+Then walk the affected path in the UI. The cheapest end-to-end check is the Create tab with the Ollama provider (free, no API key) and the local SDXL Turbo image model (free). For a stage in isolation, import and call it against an existing `output/<run>/` directory — the artifacts on disk are the real fixtures.
 
 Streamlit hot-reloads `app.py`, but **not** imported modules. Restart the server after editing anything in `pipeline/`.
 
@@ -136,11 +140,10 @@ New tests are worth writing for pure, deterministic logic (the segment-boundary 
 
 Known live bugs and landmines. Not a backlog — just things that will bite.
 
-- **Resume hardcodes `provider="openrouter"`** (`app.py:566`), ignoring the stored `image_model`. A local-model project cannot be resumed locally.
+- **Resume cannot use a local image model** — it raises a clear error rather than silently switching provider.
 - **`"failed"` status is transient.** `_load_or_backfill` rewrites it to `"in_progress"` on the next render, so the ❌ icon usually disappears before you see it.
-- **Local SDXL base is mispriced** at $0.07/img in the estimate: `_default_ids` (`app.py:382`) omits the `__10` variant, so it takes the custom-model branch despite running locally for free.
 - **`_pipe` is never invalidated** when the selected local model changes — switching models reuses the first-loaded pipeline.
-- **`script.txt` is written cp1252** on Windows (`app.py:438`, no `encoding=`). Em dashes land as `\x97`. `project.json` and `transcript.json` are safe via `json.dump`'s `ensure_ascii=True`.
 - **`list_edge_voices()` is called every rerun** and only `RuntimeError` is caught — other exception types escape the handler.
+- **The Settings widgets render after the Create tab**, so `_setting()` must fall back to `DEFAULT_MODELS` rather than reading an absent key as `""` — otherwise the estimate looks stale the moment Settings renders.
 - **Seeds are only honoured by some models.** An unsupported `seed` field is retried without it (`_post_image`, 400 only), so a run can silently proceed unseeded rather than failing loudly. `seed=None` sends nothing at all.
 - **Concurrency is capped at 4 with no rate-limit backoff.** A provider that throttles returns an error, and the first failure aborts the run — the images already on disk are reused on resume.

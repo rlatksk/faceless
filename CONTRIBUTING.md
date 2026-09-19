@@ -9,7 +9,7 @@ Thanks for wanting to help. This is a small, single-author project — the proce
 | **Bug reports** | Most valuable. Include the traceback, the provider/model you selected, and whether it reproduces on a fresh run. |
 | **Bug fixes** | Welcome. Keep them narrow — one bug, one PR. |
 | **New providers** | Welcome if they follow the existing dispatch pattern (see below). |
-| **New image models** | Usually just an entry in the model list in `app.py`. Probably not worth a PR — add it under **⚙ Settings → Image Models** at runtime instead. |
+| **New image models** | Usually just an entry in the model list in `app.py`. Probably not worth a PR — add it under **Settings → Extra image models** at runtime instead. |
 | **Refactors** | Please open an issue first. This codebase is intentionally small and plain; restructuring needs a reason. |
 | **Formatting-only PRs** | No. They create noise and merge conflicts. |
 
@@ -40,7 +40,9 @@ These aren't style preferences — the design depends on them.
 
 **State lives on the filesystem.** A run is a directory in `output/`, and `project.json` plus the artifacts beside it *are* the run state. Don't introduce a database, a global registry, or in-memory run tracking — resume works precisely because everything is reconstructible from disk.
 
-**Provider dispatch is by plain string.** LLM providers are `"ollama"` / `"deepseek"` / `"openrouter"`; image providers are `"local"` / `"openrouter"`. Adding a provider means adding a branch in the dispatch function, not building an abstraction layer. Do not introduce a plugin system or a base class for two implementations.
+**Provider dispatch is by plain string.** LLM providers are `"ollama"` / `"deepseek"` / `"kenari"` / `"openrouter"`; image providers are `"local"` / `"kenari"` / `"openrouter"`. Adding a provider means adding a branch in the dispatch function, not building an abstraction layer. Do not introduce a plugin system or a base class for two implementations.
+
+**One pipeline, one implementation.** `_run_pipeline` in `app.py` executes every stage that is not already done, and *both* the first render and Resume call it. A fresh project has all five steps pending so it runs them all; a resumed one picks up where it stopped. Do not fork it back into two copies — that is how the run and resume paths drifted apart before.
 
 **Pipeline stages are plain functions.** No classes inside `pipeline/`. Each stage takes explicit arguments and returns its result — `generate_images` returns `(paths, cost)`, the rest return `None` or a value.
 

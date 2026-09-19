@@ -90,16 +90,26 @@ Opens at `http://localhost:8501`. Launch from the repo root — `.env` and the `
 
 ## Usage
 
-### 1. Paste your source text
+Three tabs: **Create**, **Projects**, **Settings**.
 
-Anything with a narrative: a true-crime story, a Reddit post, a script you wrote. The LLM decides how to split it into scenes.
+### Create
 
-### 2. Pick a voice and an image model
+Four numbered sections, top to bottom.
+
+**1 · Your story** — paste anything with a narrative: a true-crime story, a Reddit post, a script you wrote. The script model decides how to split it into scenes.
+
+**2 · Script** — pick the provider that writes the narration and image prompts. Kenari, DeepSeek and OpenRouter need a key; Ollama runs locally with none. The app warns you only when the provider you selected is missing its key. Model IDs are configurable per provider in **Settings**.
+
+**3 · Look and sound** — voice, style, image model, music, and the character seed.
 
 Voices are pulled live from Edge TTS, filtered to English locales, sorted by name.
 
 | Image model | Provider | Cost |
 |---|---|---|
+| Nano Banana 2 Lite | Kenari | 150 IDR/img |
+| Nano Banana 2 | Kenari | 250 IDR/img |
+| Nano Banana Pro | Kenari | 350 IDR/img |
+| Grok Imagine | Kenari | 300 IDR/img |
 | Gemini 3.1 Flash Lite | OpenRouter | ~$0.035/img |
 | Grok Imagine 1K | OpenRouter | ~$0.05/img |
 | Gemini 3.1 Flash | OpenRouter | ~$0.07/img |
@@ -107,33 +117,38 @@ Voices are pulled live from Edge TTS, filtered to English locales, sorted by nam
 | Local SDXL (10 steps) | Local | Free |
 | Local SDXL Turbo | Local | Free |
 
-Kenari models (billed in IDR per image, needs PAYG balance): Nano Banana 2 Lite 150, Nano Banana 2 250, Nano Banana Pro 350, Grok Imagine 300.
+Add any other OpenRouter model ID in **Settings → Extra image models** (one per line) and it appears in the dropdown.
 
-Add any other OpenRouter model ID under **⚙ Settings → Image Models** (one per line) and it appears in the dropdown.
+**Indie Dark Comic** is the built-in style preset — a graphic-novel look with heavy ink outlines, cel shading, and high-contrast lighting. Its template contains a `[INSERT YOUR SCENE / CHARACTER HERE]` placeholder, so each scene prompt gets substituted into it. Pick **Custom** to supply your own tag instead; it is appended to each prompt as `, {your style} style`.
 
-### 3. Choose a style
-
-**Indie Dark Comic** is the built-in preset — a graphic-novel look with heavy ink outlines, cel shading, and high-contrast lighting. Its template contains a `[INSERT YOUR SCENE / CHARACTER HERE]` placeholder, so each scene prompt gets substituted into it.
-
-Pick **Custom** to supply your own style tag. It is appended to each prompt as `, {your style} style`.
-
-### 4. Optional: lock the character and add music
-
-**Lock character (fixed seed)** sends a fixed `seed` with every image request, so the cast stays consistent between scenes instead of drifting. The seed is generated once per session, shown under the toggle, and stored in `project.json` — a resumed run reproduces the same images. Models that reject the field are retried without it rather than failing; the local diffusers path gets it as a torch generator instead.
+**Lock character (same seed every image)** sends a fixed `seed` with every image request, so the cast stays consistent between scenes instead of drifting. The seed is generated once per session, shown under the toggle, and stored in `project.json` — a resumed run reproduces the same images. Models that reject the field are retried without it rather than failing; the local diffusers path gets it as a torch generator instead.
 
 **Music** picks a track from `assets/music/` (Off by default, so existing behaviour is unchanged) and **Music volume** sets its level. The bed loops to the video length, fades out over the last 2 s, and is ducked 18 dB under speech using the word timestamps — so it sits at full level in pauses and drops out of the way of narration.
 
 The three bundled tracks are synthesised ambient drones generated for this repo, so they are licence-free for monetised uploads. Drop any `.mp3` into `assets/music/` to add your own.
 
-### 5. Estimate, then generate
+**4 · Cost and render** — one button, whose label tells you what happens next:
 
-**Estimate Cost** runs the LLM first (free on Ollama, fractions of a cent on the API providers) to learn how many images will be needed, then shows a cost breakdown. Nothing is charged beyond the LLM call until you press **Generate Video**.
+| State | Button | Meaning |
+|---|---|---|
+| Not estimated | **Estimate script** | Runs the script model once. Nothing else is charged. |
+| Estimated | **Render video** | Runs the remaining four stages. |
+| Script inputs changed | **Re-estimate script** | The stored script no longer matches your text or model. |
 
-Generation writes everything to `output/<timestamp>/`:
+The estimate is invalidated only by the things that actually change the script — your source text and the script model. Changing the voice, image model, style, music or seed keeps it, since those are applied at render time.
+
+While rendering, a row of stage chips shows which of the five stages is running:
+
+```
+SCRIPT  VOICE  TIMING  IMAGES  RENDER
+  done  active     —       —       —
+```
+
+Rendering writes everything to `output/<timestamp>/`:
 
 ```
 output/2026-09-19_143022/
-├── project.json       # run state, prompts, steps, cost
+├── project.json       # run state, prompts, steps, cost, seed, music
 ├── script.txt         # narration + numbered prompts
 ├── audio.mp3          # Edge TTS output
 ├── transcript.json    # [{word, start, end}, ...]
@@ -142,9 +157,15 @@ output/2026-09-19_143022/
 └── final.mp4          # the deliverable
 ```
 
-### 6. Resume if it fails
+### Projects
 
-The **Projects** tab lists every run with its progress and cost. Anything `failed` or `in_progress` gets a **Resume** button that restarts from the last incomplete stage — generated images are reused, not regenerated.
+A gallery of every run, with summary counts and total spend at the top. Each card previews the video (or the first image), shows a status badge and progress bar, and offers **Resume** for anything unfinished or failed. **Details** expands to the audio, per-stage chips, model, music and seed.
+
+Resume restarts from the last incomplete stage — generated images are reused, not regenerated.
+
+### Settings
+
+API key status per provider, the script model default for each, extra OpenRouter image model IDs, and where projects and music live on disk. Keys themselves are read from `.env`; restart the app after editing it.
 
 ---
 
@@ -187,7 +208,7 @@ Five stages, always in this order, each one a plain function call in `app.py`:
 
 `.streamlit/config.toml` sets the dark theme and disables Streamlit telemetry. Most visual styling lives in the `_CSS` block in `app.py` — a Google Fonts import (Teko + Inter), a film-grain overlay, and crimson accents.
 
-Model defaults are editable at runtime under **⚙ Settings**:
+Model defaults are editable at runtime under **Settings → Script models**:
 
 - Ollama — `llama3`
 - DeepSeek — `deepseek-v4-flash`
@@ -250,14 +271,11 @@ faceless/
 
 ## Known limitations
 
-- A project generated with a local image model cannot be resumed from the UI; re-run it from the Generate tab.
+- A project generated with a local image model cannot be resumed from the UI; re-run it from the Create tab.
 - A project's `failed` status is recalculated on every render, so the failure indicator is often transient.
-- Local SDXL base is quoted at $0.07/img in the estimate despite running locally for free.
-- `script.txt` is written in the system codepage on Windows, so non-ASCII characters may render incorrectly.
-- Switching between local image models within one session reuses the first loaded pipeline.
-- Legacy projects that predate `image_prompts` being stored can never reach 100% progress, because the image-completion check compares against a stored prompt count of zero.
 - The image seed is only as good as the provider: models that ignore `seed` will still drift, and the retry-without-seed fallback means a run can silently proceed unseeded.
 - Concurrent image requests are capped at 4 with no rate-limit backoff; a provider that throttles will fail the run rather than wait.
+- Long renders still block the browser tab, and refreshing it loses progress — the run is written to disk stage by stage, so Resume recovers it, but the page will not survive the refresh.
 
 See `AGENTS.md` for a fuller list with file and line references.
 
