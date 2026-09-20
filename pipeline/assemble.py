@@ -315,6 +315,62 @@ def _text_dim(text, font):
     return bbox[2] - bbox[0], bbox[3] - bbox[1]
 
 
+def _wrap(text, font, max_width):
+    """Greedy word wrap to a pixel width."""
+    words = text.split()
+    lines, current = [], ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        if _text_dim(candidate, font)[0] <= max_width or not current:
+            current = candidate
+        else:
+            lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    return lines
+
+
+def make_thumbnail(image_path, text, out_path, width=FRAME_W, height=FRAME_H):
+    """Composite a scene image and a headline into a vertical thumbnail.
+
+    Built from a frame the video already contains rather than generated fresh:
+    it costs nothing and matches the video's look. A scrim behind the text keeps
+    it legible over any artwork, and the type shrinks to fit rather than
+    overflowing the frame.
+    """
+    base = Image.fromarray(_fit_frame(image_path, width, height)).convert("RGBA")
+
+    if text.strip():
+        # Darken the top of the frame so white text reads over a bright scene.
+        scrim = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(scrim)
+        fade_h = max(1, int(height * 0.45))
+        for y in range(fade_h):
+            alpha = int(200 * (1 - y / fade_h) ** 0.6)
+            draw.line([(0, y), (width, y)], fill=(0, 0, 0, alpha))
+        base = Image.alpha_composite(base, scrim)
+
+        font_size = 150
+        font = ImageFont.truetype(_FONT, font_size)
+        lines = _wrap(text, font, width - 120)
+        while font_size > 44 and len(lines) > 3:
+            font_size -= 8
+            font = ImageFont.truetype(_FONT, font_size)
+            lines = _wrap(text, font, width - 120)
+
+        line_h = _text_dim("Ag", font)[1] + 20
+        y = int(height * 0.09)
+        for line in lines:
+            rendered = _render_text(line, _FONT, font_size, "white",
+                                    stroke_width=max(4, font_size // 12))
+            strip = Image.fromarray(rendered)
+            base.alpha_composite(strip, (max(0, (width - strip.width) // 2), y))
+            y += line_h
+
+    base.convert("RGB").save(out_path)
+
+
 def _group_into_segments(timestamps, max_words=5, min_duration=2.0):
     segments = []
     seg = []

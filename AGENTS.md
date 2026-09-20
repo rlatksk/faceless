@@ -2,7 +2,7 @@
 
 Streamlit app that turns source text into a 1080×1920 vertical video. Five stages run synchronously: LLM script → Edge TTS audio → Whisper word timestamps → image generation → MoviePy assembly.
 
-13 tracked files, ~1,100 lines. `app.py` is the whole UI and orchestration; `pipeline/` holds the five stage modules.
+27 tracked files, ~2,300 lines. `app.py` is the whole UI and orchestration; `pipeline/` holds the five stage modules.
 
 ## Architecture & Data Flow
 
@@ -20,11 +20,13 @@ Streamlit app that turns source text into a 1080×1920 vertical video. Five stag
 | images | `generate_images(prompts, out_dir, model, provider, progress_cb, seed)` | `img_NNN.png` |
 | assemble | `assemble(images, audio, timestamps, out, music_path, music_volume)` | `final.mp4` |
 
+**The upload pack is not a stage.** After `assemble`, `_run_pipeline` optionally calls `generate_post_pack(narration, source_text, n_scenes, provider, model)` and `make_thumbnail(scene_image, text, out)` to write `post.json`, `post.md` and `thumbnail.png`. It is deliberately outside `steps` and wrapped in a bare `except`: the video is already rendered and paid for by then, so a metadata failure must warn, never mark the run failed. Skipped when `post.json` already exists, when there are no images, or when the project has no persisted `narration` (pre-`narration` projects — the model returns prose, not JSON, for empty input).
+
 `generate_images` is the only stage returning a tuple: `(paths, cost)`. All others return `None` or a value. Timestamps are `{"word": str, "start": float, "end": float}`; `assemble` consumes them directly.
 
 **`seed` and the music arguments are optional and default to off**, so every stage stays callable with its original positional signature. `seed=None` means unseeded; a music path of `None` means no bed. Both are persisted in `project.json` (`seed`, `music`, `music_volume`) so resume reproduces the same run.
 
-**State is the filesystem.** One run = one directory `output/<YYYY-MM-DD_HHMMSS>/` containing `project.json`, `script.txt`, `audio.mp3`, `transcript.json`, `img_000.png…`, `final.mp4`. `project.json` holds `narration`, `image_prompts`, `voice_id`, `image_model`, `total_cost`, and `steps` — a dict of `{stage: {"status": "pending"|"done"}}`.
+**State is the filesystem.** One run = one directory `output/<YYYY-MM-DD_HHMMSS>/` containing `project.json`, `script.txt`, `audio.mp3`, `transcript.json`, `img_000.png…`, `final.mp4`, and — when the upload pack ran — `post.json`, `post.md`, `thumbnail.png`. `project.json` holds `narration`, `image_prompts`, `voice_id`, `image_model`, `total_cost`, and `steps` — a dict of `{stage: {"status": "pending"|"done"}}`.
 
 There is no database and no in-memory run state. Any stage can be re-entered from disk, which is what makes resume work.
 
@@ -45,17 +47,17 @@ There is no database and no in-memory run state. Any stage can be re-entered fro
 ```
 app.py                  # Entire UI + orchestration
 pipeline/               # One module per stage; no cross-imports
-  script.py             # LLM → {narration, image_prompts}
+  script.py             # LLM → {narration, image_prompts}, and the upload pack
   reddit.py             # Reddit post → source text (Atom feed, not the JSON API)
   audio.py              # Edge TTS (async under the hood)
   transcribe.py         # faster-whisper word timestamps
   images.py             # OpenRouter / Kenari HTTP, or local diffusers
-  assemble.py           # numpy compositor + subtitles + ducked music, piped to ffmpeg
+  assemble.py           # numpy compositor + subtitles + ducked music, piped to ffmpeg; thumbnail
   cost.py               # PRICES dict only — no functions
 assets/music/           # Bundled ambient beds, licence-free (synthesised for this repo)
 .streamlit/config.toml  # Theme + telemetry off
 output/                 # Runtime artifacts, gitignored
-tests/                  # 74 tests — see Testing & QA
+tests/                  # 104 tests — see Testing & QA
 ```
 
 ## Development Commands
@@ -67,7 +69,7 @@ pip install -r requirements.txt
 
 streamlit run app.py     # UI at localhost:8501
 ruff check .             # Lint (no config file — runs on defaults)
-pytest                   # 74 tests — see Testing & QA
+pytest                   # 104 tests — see Testing & QA
 ruff format .
 ```
 
@@ -120,10 +122,16 @@ Launch from the repo root: `load_dotenv()` and `PROJECTS_DIR = "output"` are bot
 
 ## Testing & QA
 
-**A suite exists:** 74 tests across `tests/`, covering the fiddly deterministic logic —
+**A suite exists:** 104 tests across `tests/`, covering the fiddly deterministic logic —
 the ducking envelope and frame fitting in `pipeline/assemble.py`, the concurrent runner and
-provider response shapes in `pipeline/images.py`, script JSON parsing, Reddit URL parsing and
-feed cleaning, and the weighted progress percentage. `pytest` collects and passes.
+provider response shapes in `pipeline/images.py`, script JSON parsing and upload-pack
+normalisation, Reddit URL parsing and feed cleaning, and the weighted progress percentage.
+`pytest` collects and passes.
+
+**Fixtures worth knowing.** `output/2026-07-06_101927` (10 images, 230 words, 93s audio) and
+`output/2026-09-19_215216` (AITA render, music) are real artifacts usable without spending
+anything. Both carry a `post.json`/`thumbnail.png` from the upload pack. Older runs from
+`2026-07-06` have no `narration` persisted, so the upload pack skips them.
 
 Everything else is I/O-bound and its correctness shows up in the produced artifacts, so
 **verifying a change still means exercising the app**, not running tests:
@@ -149,3 +157,7 @@ Known live bugs and landmines. Not a backlog — just things that will bite.
 - **The Settings widgets render after the Create tab**, so `_setting()` must fall back to `DEFAULT_MODELS` rather than reading an absent key as `""` — otherwise the estimate looks stale the moment Settings renders.
 - **Seeds are only honoured by some models.** An unsupported `seed` field is retried without it (`_post_image`, 400 only), so a run can silently proceed unseeded rather than failing loudly. `seed=None` sends nothing at all.
 - **Concurrency is capped at 4.** Transient failures (429/5xx, connection errors) retry three times with backoff, honouring `Retry-After`; 402 and other 4xx do not retry, since those mean billing or a bad request. A provider that keeps failing still ends the run, but every prompt is attempted first and the images already on disk are reused on resume.
+- **`st.expander` cannot nest.** Streamlit raises `StreamlitAPIException` and renders *nothing*, so the upload pack inside a project card's Details expander silently disappeared. The card uses a `_section()` heading instead. The Create tab's copy is fine — that expander is top-level.
+- **`st.image` with no width fills the container.** The thumbnail is 1080×1920; uncapped it ate ~590px of a 391px-wide card and pushed the copy fields off screen. `width=300` holds in both the card and the Create tab.
+- **Resume cannot reach a project whose artifacts are all present.** `_load_or_backfill` marks it `completed` on render, and the Resume button only renders for `failed`/`in_progress` — so a run that is missing only its upload pack has no in-UI way to retry. To exercise the resume path on a fixture, delete its `final.mp4` first.
+- **`generate_post_pack` needs real narration.** With an empty `narration` the model answers in prose instead of JSON and `_parse_json` raises — that is why the app gates the pack on `project.get("narration")` rather than catching it per run.

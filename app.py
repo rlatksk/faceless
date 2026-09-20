@@ -11,11 +11,11 @@ import streamlit as st
 load_dotenv()
 
 from pipeline.audio import synthesize_edge, list_edge_voices  # noqa: E402
-from pipeline.script import generate_script  # noqa: E402
+from pipeline.script import generate_script, generate_post_pack  # noqa: E402
 from pipeline.reddit import fetch_post  # noqa: E402
 from pipeline.transcribe import transcribe  # noqa: E402
 from pipeline.images import generate_images  # noqa: E402
-from pipeline.assemble import assemble, MUSIC_DIR  # noqa: E402
+from pipeline.assemble import assemble, make_thumbnail, MUSIC_DIR  # noqa: E402
 from pipeline.cost import PRICES, KENARI_IMAGE_IDR, KENARI_IMAGE_IDR_DEFAULT, IDR_PER_USD  # noqa: E402
 
 PROJECTS_DIR = "output"
@@ -743,6 +743,21 @@ def _run_pipeline(project, out_dir, slot):
                  music_path=_music_path(project), music_volume=project.get("music_volume", 0.15),
                  progress_cb=render_progress)
         steps["assemble"] = {"status": "done"}
+
+    # The upload pack is a bonus, never a gate: the video is already rendered and
+    # paid for, so a metadata failure must not mark the run failed.
+    # A project from before narration was persisted has nothing to write metadata
+    # from, so it is skipped rather than paying for a call that cannot succeed.
+    if not os.path.exists(f"{out_dir}/post.json") and images and project.get("narration"):
+        # No stage chip is lit here — every chip is already "done", and lighting
+        # Render back up mid-sentence made it flicker from done to active and back.
+        mark("assemble", "Writing the upload pack…")
+        try:
+            post_provider, post_model = _llm_choice(project.get("llm_provider", "Kenari (API)"))
+            _make_post_pack(project, out_dir, images, post_provider, post_model)
+        except Exception as e:
+            st.warning(f"The video is ready, but the upload pack could not be generated: {e}")
+
     project["status"] = "completed"
     _save_project(out_dir, project)
     elapsed = int(time.time() - started)
@@ -802,6 +817,82 @@ def _estimate_costs(img_model, imgs, llm_label, tokens):
         return round(imgs * PRICES[_PRICED_OPENROUTER[model_id]], 4), 0.0, "OpenRouter"
     img_cost = round(imgs * PRICES["openrouter_gemini_flash"], 4)
     return img_cost, _llm_cost_usd(llm_label, tokens), "estimated"
+
+
+def _write_post_pack(out_dir, pack, scene_image):
+    """Write post.json and post.md beside the video."""
+    with open(f"{out_dir}/post.json", "w", encoding="utf-8") as f:
+        json.dump(pack, f, indent=2, ensure_ascii=False)
+
+    lines = [
+        f"# {pack['title']}",
+        "",
+        "## Description",
+        "",
+        pack["description"],
+        "",
+        "## Hashtags",
+        "",
+        " ".join(pack["hashtags"]),
+        "",
+        "## Thumbnail",
+        "",
+        f"- `thumbnail.png` — from `{os.path.basename(scene_image)}`"
+        f" (scene {pack['thumbnail_scene']})",
+        f"- Headline: **{pack['thumbnail_text']}**",
+    ]
+    with open(f"{out_dir}/post.md", "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+
+
+def _make_post_pack(project, out_dir, images, llm_provider, llm_model):
+    """Generate the upload metadata and thumbnail for a finished video.
+
+    Wrapped by the caller so a metadata failure can never fail a rendered video —
+    the video is the expensive part and it is already on disk by this point.
+    """
+    pack = generate_post_pack(
+        project.get("narration", ""), project.get("source_text", ""),
+        n_scenes=len(images), provider=llm_provider, model=llm_model)
+    scene_idx = min(max(pack["thumbnail_scene"] - 1, 0), len(images) - 1)
+    scene_image = images[scene_idx]
+    make_thumbnail(scene_image, pack["thumbnail_text"], f"{out_dir}/thumbnail.png")
+    _write_post_pack(out_dir, pack, scene_image)
+    return pack
+
+
+def _post_panel(out_dir, key_prefix):
+    """Render a finished project's upload pack, copy-ready.
+
+    Read-only text inputs rather than `st.write`, so the title, description and
+    hashtags can each be selected and copied in one click — retyping them out of
+    rendered markdown is the whole reason publishing gets skipped.
+    """
+    pack = json.load(open(f"{out_dir}/post.json", encoding="utf-8"))
+
+    # Stacked rather than side-by-side: this renders both full-width in the
+    # Create tab and inside a third-width project card, and a 3:2 split only
+    # reads at the former — in the card the description collapsed to a sliver.
+    thumb = f"{out_dir}/thumbnail.png"
+    if os.path.exists(thumb):
+        st.image(thumb, width=300)
+
+    st.text_input("Title", pack.get("title", ""), key=f"{key_prefix}_title")
+    st.text_area("Description", pack.get("description", ""), height=140,
+                 key=f"{key_prefix}_desc")
+    st.text_input("Hashtags", " ".join(pack.get("hashtags", [])),
+                  key=f"{key_prefix}_tags")
+
+    d1, d2 = st.columns(2)
+    with d1:
+        st.download_button("Metadata (JSON)", open(f"{out_dir}/post.json", "rb"),
+                           file_name="post.json", key=f"{key_prefix}_dljson",
+                           use_container_width=True)
+    with d2:
+        if os.path.exists(thumb):
+            st.download_button("Thumbnail (PNG)", open(thumb, "rb"),
+                               file_name="thumbnail.png", key=f"{key_prefix}_dlthumb",
+                               use_container_width=True)
 
 
 def _section(num, title, note=""):
@@ -1064,6 +1155,10 @@ with tab_create:
                 proj = json.load(open(f"{last}/project.json"))
                 st.caption(f"**{len(proj.get('image_prompts', []))} scenes** · "
                            f"${proj.get('total_cost', 0):.2f} · `{os.path.basename(last)}`")
+            if os.path.exists(f"{last}/post.json"):
+                with st.expander("Upload pack — title, description, hashtags, thumbnail",
+                                 expanded=True):
+                    _post_panel(last, "create")
 
 # --------------------------------------------------------------------------
 # Projects
@@ -1162,6 +1257,9 @@ with tab_projects:
                         st.caption(f"Music: {proj.get('music') or 'none'}")
                         if proj.get("seed"):
                             st.caption(f"Seed: {proj['seed']}")
+                        if os.path.exists(f"{PROJECTS_DIR}/{pid}/post.json"):
+                            _section("", "Upload pack")
+                            _post_panel(f"{PROJECTS_DIR}/{pid}", pid)
                         if st.button("Delete project", key=f"del_{pid}", use_container_width=True):
                             shutil.rmtree(f"{PROJECTS_DIR}/{pid}")
                             st.rerun()

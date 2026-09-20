@@ -38,6 +38,79 @@ Keep narration under 500 words. Generate at most 10 image prompts (one per sente
     return _openrouter_script(prompt, model)
 
 
+_POST_PROMPT = """You are writing the upload metadata for a short vertical video.
+
+The narration is:
+{narration}
+
+The original source was:
+{source}
+
+Return JSON:
+{{"title": "the hook, under 90 characters, no hashtags, no quotes",
+  "description": "2-3 sentences that make someone want to watch. No hashtags — those are a separate field",
+  "hashtags": ["#shorts", "#storytime"],
+  "thumbnail_text": "2 to 4 punchy words, all caps, no punctuation",
+  "thumbnail_scene": {scene_hint}}}
+
+"thumbnail_scene" is the 1-based index of the image that would make the most
+compelling thumbnail — pick the most striking, dramatic or emotionally clear
+moment, not the opening establishing shot. There are {n_scenes} images.
+
+The title must work as a hook on its own. Do not start it with "AITA" unless the
+source is an AITA post. Do not use hashtags in the title."""
+
+
+def generate_post_pack(narration, source_text, n_scenes, provider="ollama", model="llama3"):
+    """Return upload metadata for a finished video: title, description, hashtags,
+    thumbnail text, and which scene makes the best thumbnail.
+
+    Raises RuntimeError if the model returns nothing usable, so the caller can
+    decide whether that matters — it never should for an already-rendered video.
+    """
+    prompt = _POST_PROMPT.format(
+        narration=narration, source=source_text[:1500],
+        n_scenes=n_scenes, scene_hint=max(1, n_scenes),
+    )
+    if provider == "ollama":
+        result = _ollama_script(prompt, model)
+    elif provider == "deepseek":
+        result = _deepseek_script(prompt, model)
+    elif provider == "kenari":
+        result = _kenari_script(prompt, model)
+    else:
+        result = _openrouter_script(prompt, model)
+
+    title = str(result.get("title", "")).strip().strip('"')
+    if not title:
+        raise RuntimeError("The model returned no title for the post.")
+
+    # Models return the tags as a list about as often as they return one string,
+    # and iterating a string yields characters — so normalise before looping.
+    raw_tags = result.get("hashtags", []) or []
+    if isinstance(raw_tags, str):
+        raw_tags = raw_tags.split()
+
+    hashtags = []
+    for tag in raw_tags:
+        tag = str(tag).strip()
+        if tag:
+            hashtags.append(tag if tag.startswith("#") else f"#{tag}")
+
+    try:
+        scene = max(1, min(int(result.get("thumbnail_scene", 1)), max(1, n_scenes)))
+    except (TypeError, ValueError):
+        scene = 1
+
+    return {
+        "title": title,
+        "description": str(result.get("description", "")).strip(),
+        "hashtags": hashtags,
+        "thumbnail_text": str(result.get("thumbnail_text", "")).strip().upper(),
+        "thumbnail_scene": scene,
+    }
+
+
 def _ollama_script(prompt, model):
     try:
         resp = requests.post(

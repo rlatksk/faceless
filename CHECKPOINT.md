@@ -9,10 +9,11 @@ Handoff state for a fresh session. Everything below is verified, not assumed.
 | | |
 |---|---|
 | Branch | `master`, **pushed**, 0 unpushed commits |
-| HEAD | `e597014 reddit: drop the feed footer and truncate at EDIT` |
-| Tests | **91 passed** (`pytest`) |
+| HEAD | `f95464e assemble: render at 30fps for short-form platforms` |
+| Tests | **104 passed** (`pytest`) |
 | Lint | `ruff check .` clean |
-| Tracked files | 26 |
+| Tracked files | 27 |
+| Uncommitted | upload pack (§5.5 / issue #20) — `app.py`, `pipeline/script.py`, `pipeline/assemble.py`, `tests/test_post.py`, `AGENTS.md` |
 | Untracked | `plan.md` only (the original dev roadmap — deliberately not committed) |
 
 19 commits this session, from `4a69a02` to `e597014`.
@@ -20,6 +21,29 @@ Handoff state for a fresh session. Everything below is verified, not assumed.
 ---
 
 ## What was built
+
+### Upload pack — issue #20 / plan §5.5 (uncommitted)
+
+One LLM call after `assemble` writes the upload metadata, plus a thumbnail composited from a
+scene the video already contains (no extra image spend).
+
+| Piece | Where |
+|---|---|
+| `generate_post_pack(narration, source_text, n_scenes, provider, model)` | `pipeline/script.py` |
+| `make_thumbnail(image_path, text, out)` + `_wrap` | `pipeline/assemble.py` |
+| `_make_post_pack` / `_write_post_pack` / `_post_panel` | `app.py` |
+| Artifacts | `post.json`, `post.md`, `thumbnail.png` in the run directory |
+
+Deliberately **not** a pipeline stage: it is outside `steps`, wrapped in a bare `except`, and
+gated on `project.get("narration")`. The video is rendered and paid for by then, so a metadata
+failure warns instead of failing the run.
+
+Verified end to end (real Kenari, ~2.4s per pack): a full resume rendered the video, printed
+"Writing the upload pack…", and wrote all three files. Pointed at a dead Ollama the run still
+finished `Ready · 100%` with the warning shown — that is the "never a gate" property, proven.
+
+UI: copy-ready Title / Description / Hashtags text fields plus JSON and PNG downloads, in the
+Create tab's "Your video" section and in each project card's Details.
 
 ### Issues closed on GitHub (#9, #17, #18)
 
