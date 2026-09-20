@@ -864,9 +864,10 @@ def _make_post_pack(project, out_dir, images, llm_provider, llm_model):
 def _post_panel(out_dir, key_prefix):
     """Render a finished project's upload pack, copy-ready.
 
-    Read-only text inputs rather than `st.write`, so the title, description and
-    hashtags can each be selected and copied in one click — retyping them out of
-    rendered markdown is the whole reason publishing gets skipped.
+    `st.code` rather than `st.write` or a text input: it is the only Streamlit
+    element that ships a copy button, which is what makes these one click to
+    paste into an upload form. `wrap_lines` keeps the description from scrolling
+    sideways.
     """
     pack = json.load(open(f"{out_dir}/post.json", encoding="utf-8"))
 
@@ -877,11 +878,11 @@ def _post_panel(out_dir, key_prefix):
     if os.path.exists(thumb):
         st.image(thumb, width=300)
 
-    st.text_input("Title", pack.get("title", ""), key=f"{key_prefix}_title")
-    st.text_area("Description", pack.get("description", ""), height=140,
-                 key=f"{key_prefix}_desc")
-    st.text_input("Hashtags", " ".join(pack.get("hashtags", [])),
-                  key=f"{key_prefix}_tags")
+    for label, value in (("Title", pack.get("title", "")),
+                         ("Description", pack.get("description", "")),
+                         ("Hashtags", " ".join(pack.get("hashtags", [])))):
+        st.caption(label)
+        st.code(value, language=None, wrap_lines=True)
 
     d1, d2 = st.columns(2)
     with d1:
