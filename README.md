@@ -98,6 +98,18 @@ Four numbered sections, top to bottom.
 
 **1 · Your story** — paste anything with a narrative: a true-crime story, a Reddit post, a script you wrote. The script model decides how to split it into scenes.
 
+**Import from Reddit** takes a post URL and fills the box for you, so you don't have to copy the text out by hand. Paste any of the usual share shapes:
+
+```
+https://www.reddit.com/r/AmItheAsshole/comments/1wkpoj3/title_slug/
+https://reddit.com/r/AITAH/comments/abc123/
+https://redd.it/1wkpoj3
+```
+
+The title becomes the first line of the source, and the post body follows. No API key or Reddit account is needed.
+
+> Reddit serves its JSON API only to logged-in browsers — `www.reddit.com/…/.json` and `api.reddit.com` both return 403 for scripted requests. This reads the Atom feed at `/comments/<id>/.rss` instead, which is served to plain HTTP clients. Link posts have no body and are rejected with a clear message rather than producing a script from a title alone.
+
 **2 · Script** — pick the provider that writes the narration and image prompts. Kenari, DeepSeek and OpenRouter need a key; Ollama runs locally with none. The app warns you only when the provider you selected is missing its key. Model IDs are configurable per provider in **Settings**.
 
 **3 · Look and sound** — voice, style, image model, music, and the character seed.
@@ -226,6 +238,7 @@ faceless/
 ├── app.py                  # Streamlit UI + pipeline orchestration
 ├── pipeline/
 │   ├── script.py           # Kenari / Ollama / DeepSeek / OpenRouter
+│   ├── reddit.py           # Fetch a post's title and body from its Atom feed
 │   ├── audio.py            # Edge TTS
 │   ├── transcribe.py       # faster-whisper
 │   ├── images.py           # OpenRouter / Kenari / local diffusers

@@ -12,6 +12,7 @@ load_dotenv()
 
 from pipeline.audio import synthesize_edge, list_edge_voices  # noqa: E402
 from pipeline.script import generate_script  # noqa: E402
+from pipeline.reddit import fetch_post  # noqa: E402
 from pipeline.transcribe import transcribe  # noqa: E402
 from pipeline.images import generate_images  # noqa: E402
 from pipeline.assemble import assemble, MUSIC_DIR  # noqa: E402
@@ -850,6 +851,30 @@ with tab_create:
     left, mid, right = st.columns([1, 3, 1])
     with mid:
         _section(1, "Your story", "Paste anything with a narrative — the script model splits it into scenes.")
+        with st.popover("Import from Reddit", use_container_width=False):
+            st.caption("Paste a post URL and it fills the story box below.")
+            reddit_url = st.text_input(
+                "Reddit post URL", key="_reddit_url", label_visibility="collapsed",
+                placeholder="https://www.reddit.com/r/AmItheAsshole/comments/...")
+            if st.button("Fetch post", key="_reddit_fetch", use_container_width=True):
+                if not reddit_url.strip():
+                    st.warning("Paste a Reddit post link first.")
+                else:
+                    with st.spinner("Fetching from Reddit…"):
+                        try:
+                            post = fetch_post(reddit_url.strip())
+                        except Exception as e:
+                            post = None
+                            st.error(str(e))
+                    if post:
+                        st.session_state["source_text"] = post["text"]
+                        st.session_state["_reddit_credit"] = (
+                            f"{post['subreddit']} · {post['author']}" if post["subreddit"]
+                            else post["author"])
+                        st.rerun()
+            if st.session_state.get("_reddit_credit"):
+                st.caption(f"Loaded from {st.session_state['_reddit_credit']}")
+
         source = st.text_area("Source script", height=160, label_visibility="collapsed",
                               placeholder="Paste your story or script here...", key="source_text")
 

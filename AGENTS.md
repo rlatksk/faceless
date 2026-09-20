@@ -46,15 +46,16 @@ There is no database and no in-memory run state. Any stage can be re-entered fro
 app.py                  # Entire UI + orchestration
 pipeline/               # One module per stage; no cross-imports
   script.py             # LLM → {narration, image_prompts}
+  reddit.py             # Reddit post → source text (Atom feed, not the JSON API)
   audio.py              # Edge TTS (async under the hood)
   transcribe.py         # faster-whisper word timestamps
   images.py             # OpenRouter / Kenari HTTP, or local diffusers
-  assemble.py           # MoviePy composite + word-highlight subtitles + ducked music
+  assemble.py           # numpy compositor + subtitles + ducked music, piped to ffmpeg
   cost.py               # PRICES dict only — no functions
 assets/music/           # Bundled ambient beds, licence-free (synthesised for this repo)
 .streamlit/config.toml  # Theme + telemetry off
 output/                 # Runtime artifacts, gitignored
-tests/test_pipeline.py  # 13 tests: ducking envelope + concurrent runner
+tests/                  # 74 tests — see Testing & QA
 ```
 
 ## Development Commands
@@ -66,7 +67,7 @@ pip install -r requirements.txt
 
 streamlit run app.py     # UI at localhost:8501
 ruff check .             # Lint (no config file — runs on defaults)
-pytest                   # 13 tests — see Testing & QA
+pytest                   # 74 tests — see Testing & QA
 ruff format .
 ```
 
@@ -119,9 +120,10 @@ Launch from the repo root: `load_dotenv()` and `PROJECTS_DIR = "output"` are bot
 
 ## Testing & QA
 
-**A small suite exists:** `tests/test_pipeline.py`, 13 tests, covering the ducking
-envelope in `pipeline/assemble.py` and the concurrent runner in `pipeline/images.py` —
-the two pieces of fiddly deterministic logic. `pytest` collects and passes.
+**A suite exists:** 74 tests across `tests/`, covering the fiddly deterministic logic —
+the ducking envelope and frame fitting in `pipeline/assemble.py`, the concurrent runner and
+provider response shapes in `pipeline/images.py`, script JSON parsing, Reddit URL parsing and
+feed cleaning, and the weighted progress percentage. `pytest` collects and passes.
 
 Everything else is I/O-bound and its correctness shows up in the produced artifacts, so
 **verifying a change still means exercising the app**, not running tests:

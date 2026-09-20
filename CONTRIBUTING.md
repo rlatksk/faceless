@@ -75,7 +75,7 @@ This is not Conventional Commits — the original commits all use this bare form
 There is a small suite covering the two pieces of fiddly, deterministic logic: the ducking envelope in `pipeline/assemble.py` and the concurrent runner in `pipeline/images.py`.
 
 ```bash
-pytest              # 13 tests
+pytest              # 74 tests
 ruff check .        # must pass — the only other automated gate
 ```
 
