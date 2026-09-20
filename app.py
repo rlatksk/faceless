@@ -26,6 +26,18 @@ STAGE_LABELS = [
     ("images", "Images"),
     ("assemble", "Render"),
 ]
+
+# Share of total render time each stage takes, measured on a 93s video. Used to
+# weight the progress bar so it advances at roughly a constant rate — an
+# unweighted bar would hit 40% after the two fast stages and then look stalled
+# through images and render, which are the slow ones.
+_STAGE_WEIGHTS = {
+    "script": 0.0,      # already done before the render starts
+    "audio": 0.06,
+    "transcribe": 0.14,
+    "images": 0.30,
+    "assemble": 0.50,
+}
 STYLE_PRESETS = {
     "Indie Dark Comic — horror, true crime": (
         "A dark graphic novel illustration of [INSERT YOUR SCENE / CHARACTER HERE]. "
@@ -413,6 +425,19 @@ div[data-testid="stCaptionContainer"] p {
 }
 
 /* live progress panel */
+.prog-bar {
+    height: 6px;
+    background: var(--line);
+    margin: 0 0 0.4rem;
+    overflow: hidden;
+}
+.prog-bar > i {
+    display: block;
+    height: 100%;
+    background: var(--amber);
+    box-shadow: 0 0 10px var(--amber-glow);
+    transition: width 0.3s linear;
+}
 .prog-detail {
     display: flex;
     justify-content: space-between;
@@ -420,7 +445,7 @@ div[data-testid="stCaptionContainer"] p {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.74rem;
     color: var(--text-dim);
-    margin: -0.35rem 0 0.6rem;
+    margin: 0 0 0.6rem;
 }
 .prog-time {
     color: var(--amber-dim);
@@ -612,17 +637,36 @@ def _stages_html(project, active=None, failed=None):
     return f'<div class="stage-row">{"".join(chips)}</div>'
 
 
-def _progress_html(project, detail, started, active=None, failed=None):
-    """The live progress panel: stage chips, what is happening, and elapsed time."""
+def _percent(project, active=None, fraction=0.0):
+    """Overall completion as a percentage (0-100).
+
+    Weighted by how long each stage actually takes. An unweighted bar would jump
+    to 40% after the two fast stages and then crawl, which reads as a stall. The
+    weights follow measured durations, so the bar advances at roughly a constant
+    rate.
+    """
+    steps = project.get("steps", {})
+    done = sum(w for k, w in _STAGE_WEIGHTS.items()
+               if steps.get(k, {}).get("status") == "done")
+    if active in _STAGE_WEIGHTS:
+        done += _STAGE_WEIGHTS[active] * max(0.0, min(1.0, fraction))
+    return min(100.0, done * 100)
+
+
+def _progress_html(project, detail, started, active=None, failed=None, fraction=0.0):
+    """The live progress panel: a percentage bar, stage chips, and elapsed time."""
     elapsed = int(time.time() - started)
     mins, secs = divmod(elapsed, 60)
+    pct = _percent(project, active, fraction)
     return (
         _stages_html(project, active=active, failed=failed)
-        + f'<div class="prog-detail">{detail}<span class="prog-time">{mins}:{secs:02d}</span></div>'
+        + f'<div class="prog-bar"><i style="width:{pct:.1f}%"></i></div>'
+        + f'<div class="prog-detail"><span>{detail}</span>'
+          f'<span class="prog-time">{pct:.0f}% · {mins}:{secs:02d}</span></div>'
     )
 
 
-def _run_pipeline(project, out_dir, status, bar, stages):
+def _run_pipeline(project, out_dir, slot):
     """Run every stage that is not done yet, in order.
 
     Both the first run and Resume call this: a fresh project has every step
@@ -630,23 +674,23 @@ def _run_pipeline(project, out_dir, status, bar, stages):
     stopped. The filesystem stays the source of truth — each completed stage is
     persisted before the next begins.
 
-    `bar` and `stages` carry the live progress UI; `status` is only for warnings
-    that need to outlive the progress panel, such as a partly-missing image set.
+    `slot` is a single `st.empty()` holding the progress panel; warnings go to
+    `st.warning` so they survive the next panel redraw.
     """
     steps = project["steps"]
     started = time.time()
 
-    def mark(key, detail=""):
+    def mark(key, detail="", fraction=0.0):
         _save_project(out_dir, project)
-        stages.markdown(_progress_html(project, detail, started, active=key),
-                        unsafe_allow_html=True)
+        slot.markdown(_progress_html(project, detail, started, active=key,
+                                     fraction=fraction),
+                      unsafe_allow_html=True)
 
     mark("audio", "Generating voiceover…")
     if steps["audio"]["status"] != "done":
         synthesize_edge(project["narration"], project["voice_id"], f"{out_dir}/audio.mp3")
         steps["audio"] = {"status": "done"}
     mark("transcribe", "Aligning word timings…")
-    bar.progress(20)
 
     if steps["transcribe"]["status"] != "done":
         words = transcribe(f"{out_dir}/audio.mp3")
@@ -655,7 +699,6 @@ def _run_pipeline(project, out_dir, status, bar, stages):
     else:
         words = json.load(open(f"{out_dir}/transcript.json"))
     mark("images", "Preparing images…")
-    bar.progress(35)
 
     prompts = project.get("image_prompts", [])
     have = [p for p in sorted(glob.glob(f"{out_dir}/img_*.png")) if os.path.getsize(p) > 0]
@@ -672,14 +715,11 @@ def _run_pipeline(project, out_dir, status, bar, stages):
         # failed after the provider was paid leaves exactly that state. Say so before
         # spending again, rather than silently re-buying every image.
         if have:
-            status.warning(f"Only {len(have)} of {len(prompts)} images are on disk. "
-                           f"The rest will be generated again and charged again.")
+            st.warning(f"Only {len(have)} of {len(prompts)} images are on disk. "
+                       f"The rest will be generated again and charged again.")
 
         def img_progress(i, n, action):
-            bar.progress(35 + 45 * i // n)
-            stages.markdown(_progress_html(project, f"Generating image {i} of {n}…",
-                                           started, active="images"),
-                            unsafe_allow_html=True)
+            mark("images", f"Generating image {i} of {n}…", fraction=i / n)
 
         provider = project.get("image_provider") or "openrouter"
         images, cost = generate_images(prompts, out_dir, project["image_model"],
@@ -689,20 +729,14 @@ def _run_pipeline(project, out_dir, status, bar, stages):
             raise RuntimeError(f"Only {len(images)}/{len(prompts)} images generated. Check the image model.")
         project["total_cost"] = project.get("total_cost", 0) + cost
         steps["images"] = {"status": "done"}
-    mark("assemble", "Rendering video — this is the slow one…")
-    bar.progress(80)
+    mark("assemble", "Rendering video…")
 
     if steps["assemble"]["status"] != "done":
         if not images:
             raise RuntimeError("No images to assemble — the image step needs to run first.")
 
         def render_progress(done, total):
-            bar.progress(80 + 20 * done // total)
-            stages.markdown(
-                _progress_html(project, f"Rendering frame {done} of {total}…",
-                               started, active="assemble"),
-                unsafe_allow_html=True,
-            )
+            mark("assemble", f"Rendering frame {done} of {total}…", fraction=done / total)
 
         assemble(images, f"{out_dir}/audio.mp3", words, f"{out_dir}/final.mp4",
                  music_path=_music_path(project), music_volume=project.get("music_volume", 0.15),
@@ -711,12 +745,13 @@ def _run_pipeline(project, out_dir, status, bar, stages):
     project["status"] = "completed"
     _save_project(out_dir, project)
     elapsed = int(time.time() - started)
-    stages.markdown(
+    slot.markdown(
         _stages_html(project)
-        + f'<div class="prog-detail">Done in {elapsed // 60}:{elapsed % 60:02d}</div>',
+        + '<div class="prog-bar"><i style="width:100%"></i></div>'
+        + f'<div class="prog-detail"><span>Done</span>'
+          f'<span class="prog-time">100% · {elapsed // 60}:{elapsed % 60:02d}</span></div>',
         unsafe_allow_html=True,
     )
-    bar.progress(100)
 
 
 def _img_models(custom_raw):
@@ -973,11 +1008,10 @@ with tab_create:
                     f.write(f"{i}. {p}\n")
 
             status = st.empty()
-            bar = st.progress(0)
-            stages = st.empty()
-            stages.markdown(_stages_html(project), unsafe_allow_html=True)
+            status.markdown(_progress_html(project, "Starting…", time.time()),
+                            unsafe_allow_html=True)
             try:
-                _run_pipeline(project, out_dir, status, bar, stages)
+                _run_pipeline(project, out_dir, status)
                 st.session_state["_last_output"] = out_dir
                 st.session_state["_clear_source"] = True
                 st.session_state["_clear_estimate"] = True
@@ -986,8 +1020,9 @@ with tab_create:
             except Exception as e:
                 project["status"] = "failed"
                 _save_project(out_dir, project)
-                stages.markdown(_stages_html(project, failed=_active_stage(project)),
-                                unsafe_allow_html=True)
+                status.markdown(
+                    _stages_html(project, failed=_active_stage(project)),
+                    unsafe_allow_html=True)
                 st.error(f"Render failed: {e}")
                 st.info("Nothing is lost — open the Projects tab and press Resume.")
 
@@ -1029,6 +1064,10 @@ with tab_projects:
         st.divider()
 
         cols = st.columns(3)
+        # --- resume ---------------------------------------------------------
+        # The panel is rendered inside the card that was clicked, not after the
+        # grid. It used to land below every card, which with three rows is well
+        # off-screen, so pressing Resume looked like nothing happened.
         for i, (pid, proj) in enumerate(projects):
             with cols[i % 3]:
                 with st.container(key=f"projcard_{pid}"):
@@ -1069,6 +1108,27 @@ with tab_projects:
                             st.download_button("Download", open(video_path, "rb"),
                                                file_name=f"{pid}.mp4", key=f"dl_{pid}",
                                                use_container_width=True)
+
+                    if st.session_state.get("_resume_pid") == pid:
+                        slot = st.empty()
+                        slot.markdown(
+                            _progress_html(proj, "Resuming…", time.time()),
+                            unsafe_allow_html=True)
+                        try:
+                            _run_pipeline(proj, f"{PROJECTS_DIR}/{pid}", slot)
+                            st.session_state.pop("_resume_pid", None)
+                            st.session_state["_last_output"] = f"{PROJECTS_DIR}/{pid}"
+                            st.toast("Video ready!")
+                            st.rerun()
+                        except Exception as e:
+                            proj["status"] = "failed"
+                            _save_project(f"{PROJECTS_DIR}/{pid}", proj)
+                            slot.markdown(
+                                _stages_html(proj, failed=_active_stage(proj)),
+                                unsafe_allow_html=True)
+                            st.session_state.pop("_resume_pid", None)
+                            st.error(f"Resume failed: {e}")
+
                     with st.expander("Details"):
                         if os.path.exists(f"{PROJECTS_DIR}/{pid}/audio.mp3"):
                             st.audio(f"{PROJECTS_DIR}/{pid}/audio.mp3")
@@ -1080,27 +1140,6 @@ with tab_projects:
                         if st.button("Delete project", key=f"del_{pid}", use_container_width=True):
                             shutil.rmtree(f"{PROJECTS_DIR}/{pid}")
                             st.rerun()
-
-        # --- resume ---------------------------------------------------------
-        if st.session_state.get("_resume_pid"):
-            pid = st.session_state.pop("_resume_pid")
-            out_dir = f"{PROJECTS_DIR}/{pid}"
-            proj = _load_or_backfill(out_dir)
-            status = st.empty()
-            bar = st.progress(0)
-            stages = st.empty()
-            stages.markdown(_stages_html(proj), unsafe_allow_html=True)
-            try:
-                _run_pipeline(proj, out_dir, status, bar, stages)
-                st.session_state["_last_output"] = out_dir
-                st.toast("Video ready!")
-                st.rerun()
-            except Exception as e:
-                proj["status"] = "failed"
-                _save_project(out_dir, proj)
-                stages.markdown(_stages_html(proj, failed=_active_stage(proj)),
-                                unsafe_allow_html=True)
-                st.error(f"Resume failed: {e}")
 
 # --------------------------------------------------------------------------
 # Settings
