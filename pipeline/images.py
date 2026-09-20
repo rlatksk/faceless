@@ -1,6 +1,7 @@
 import base64
 import os
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import requests
@@ -19,6 +20,13 @@ _pipe = None
 # Concurrent in-flight image requests for the HTTP providers. Kept low because
 # providers may throttle, and a 429 costs more wall-clock than it saves.
 MAX_WORKERS = 4
+
+# A paid image request can fail transiently — an upstream 5xx, a dropped
+# connection, or a throttle. Without a retry a single blip discards the whole
+# batch even though every other image succeeded.
+_MAX_ATTEMPTS = 3
+_BACKOFF = 2.0
+_RETRY_STATUS = {408, 429, 500, 502, 503, 504}
 
 
 def generate_images(prompts, output_dir, model, provider="openrouter",
@@ -52,12 +60,15 @@ def _run_parallel(prompts, output_dir, one, progress_cb=None, workers=None):
     under a lock, and `done` counts completions rather than the prompt index, so
     concurrent finishes can never report progress going backwards.
 
-    The first failure propagates out of the pool, matching the serial behaviour:
-    the run fails and the caller resumes, reusing whatever landed on disk.
+    Every prompt is attempted even if some fail. Collecting all outcomes rather
+    than raising at the first failure matters because each image is already paid
+    for: aborting early throws away work that succeeded and forces a re-charge on
+    resume. Failures are reported at the end with the prompts that failed.
     """
     n = len(prompts)
     paths = [None] * n
     costs = [0.0] * n
+    errors = {}
     lock = threading.Lock()
     done = 0
 
@@ -67,32 +78,72 @@ def _run_parallel(prompts, output_dir, one, progress_cb=None, workers=None):
             _attach_script_ctx()
         path = os.path.join(output_dir, f"img_{i:03d}.png")
         cost = 0.0
-        if not os.path.exists(path):
-            cost = one(i, prompts[i], path)
-        with lock:
-            paths[i] = path
-            costs[i] = cost
-            done += 1
-            if progress_cb:
-                progress_cb(done, n, "Generating")
+        try:
+            if not os.path.exists(path):
+                cost = one(i, prompts[i], path)
+        except Exception as e:
+            with lock:
+                errors[i] = e
+        finally:
+            with lock:
+                paths[i] = path
+                costs[i] = cost
+                done += 1
+                if progress_cb:
+                    progress_cb(done, n, "Generating")
 
     with ThreadPoolExecutor(max_workers=workers or MAX_WORKERS) as ex:
-        list(ex.map(task, range(n)))
+        # submit + gather rather than ex.map: map raises at the first failing
+        # index in order, so later results are lost even when they succeeded.
+        futures = [ex.submit(task, i) for i in range(n)]
+        for f in futures:
+            f.result()
+
+    if errors:
+        failed = ", ".join(str(i + 1) for i in sorted(errors))
+        first = errors[min(errors)]
+        raise RuntimeError(
+            f"{len(errors)} of {n} images failed (prompt {failed}): {first}"
+        )
     return paths, round(sum(costs), 4)
 
 
 def _post_image(url, headers, body, seed=None, timeout=120):
-    """POST an image request, retrying once without `seed` if it is rejected.
+    """POST an image request, retrying transient failures with backoff.
+
+    Retries only what can succeed on a second try: connection errors, timeouts,
+    throttles and upstream 5xx. A 402 is a billing state and a 4xx means the
+    request itself is wrong, so both return immediately — retrying those just
+    turns a clear error into a slow one.
 
     Seed support varies by model, so an unsupported `seed` field degrades to a
-    seedless request instead of failing the run. Status is not raised here:
-    callers inspect it first (Kenari's 402 needs its own message).
+    seedless request instead of failing the run.
     """
-    resp = requests.post(url, headers=headers, json=body, timeout=timeout)
-    if seed is not None and resp.status_code == 400:
-        retry = {k: v for k, v in body.items() if k != "seed"}
-        resp = requests.post(url, headers=headers, json=retry, timeout=timeout)
-    return resp
+    last = None
+    for attempt in range(_MAX_ATTEMPTS):
+        try:
+            resp = requests.post(url, headers=headers, json=body, timeout=timeout)
+        except requests.RequestException as e:
+            last = e
+            if attempt == _MAX_ATTEMPTS - 1:
+                raise
+            time.sleep(_BACKOFF ** attempt)
+            continue
+
+        if resp.status_code in _RETRY_STATUS and attempt < _MAX_ATTEMPTS - 1:
+            last = requests.HTTPError(f"{resp.status_code}", response=resp)
+            # Honour Retry-After when the provider sends one.
+            wait = resp.headers.get("Retry-After")
+            time.sleep(float(wait) if (wait or "").replace(".", "", 1).isdigit()
+                       else _BACKOFF ** attempt)
+            continue
+
+        if seed is not None and resp.status_code == 400:
+            retry_body = {k: v for k, v in body.items() if k != "seed"}
+            resp = requests.post(url, headers=headers, json=retry_body, timeout=timeout)
+        return resp
+
+    raise last if last else RuntimeError("image request failed with no response")
 
 
 def _generate_openrouter(prompts, output_dir, model, progress_cb=None, seed=None, workers=None):

@@ -72,19 +72,109 @@ class TestParallelRunner:
         assert [d for d, _ in seen] == list(range(1, 9))
         assert {total for _, total in seen} == {8}
 
-    def test_failure_propagates_but_keeps_finished_images(self):
+    def test_failure_reports_all_failures_and_keeps_the_rest(self):
+        """A failing image must not discard the ones that succeeded — each one is
+        already paid for, so aborting early forces a re-charge on resume."""
         def flaky(i, prompt, path):
-            if i == 1:
+            if i in (1, 4):
                 raise RuntimeError("provider said no")
             with open(path, "wb") as f:
                 f.write(b"x")
             return 0.0
 
         with tempfile.TemporaryDirectory() as d:
-            with pytest.raises(RuntimeError, match="provider said no"):
-                _run_parallel([f"p{i}" for i in range(3)], d, flaky, workers=1)
+            with pytest.raises(RuntimeError) as err:
+                _run_parallel([f"p{i}" for i in range(6)], d, flaky, workers=1)
             survivors = sorted(os.listdir(d))
-        assert "img_000.png" in survivors
+
+        message = str(err.value)
+        assert "2 of 6 images failed" in message
+        assert "prompt 2, 5" in message          # 1-based prompt numbers
+        assert survivors == ["img_000.png", "img_002.png", "img_003.png", "img_005.png"]
+
+    def test_every_prompt_is_attempted_even_after_a_failure(self):
+        """ex.map raised at the first failing index, so later work was lost."""
+        attempted = []
+
+        def flaky(i, prompt, path):
+            attempted.append(i)
+            if i == 0:
+                raise RuntimeError("first one fails")
+            with open(path, "wb") as f:
+                f.write(b"x")
+            return 0.0
+
+        with tempfile.TemporaryDirectory() as d:
+            with pytest.raises(RuntimeError):
+                _run_parallel([f"p{i}" for i in range(5)], d, flaky, workers=2)
+        assert attempted == [0, 1, 2, 3, 4]
+
+
+class TestRetry:
+    """A paid image request that fails transiently must be retried, not lost."""
+
+    def _call(self, monkeypatch, responses):
+        import pipeline.images as images
+
+        calls = []
+
+        class _Resp:
+            def __init__(self, status, headers=None):
+                self.status_code = status
+                self.headers = headers or {}
+                self.text = "{}"
+
+        def fake_post(url, headers=None, json=None, timeout=None):
+            calls.append(json)
+            return _Resp(responses[min(len(calls) - 1, len(responses) - 1)])
+
+        monkeypatch.setattr(images.requests, "post", fake_post)
+        monkeypatch.setattr(images.time, "sleep", lambda s: None)
+        resp = images._post_image("http://x", {}, {"model": "m", "prompt": "p"})
+        return resp, calls
+
+    def test_retries_a_transient_500(self, monkeypatch):
+        resp, calls = self._call(monkeypatch, [500, 500, 200])
+        assert resp.status_code == 200
+        assert len(calls) == 3
+
+    def test_retries_a_throttle(self, monkeypatch):
+        resp, calls = self._call(monkeypatch, [429, 200])
+        assert resp.status_code == 200
+        assert len(calls) == 2
+
+    def test_gives_up_after_the_attempt_limit(self, monkeypatch):
+        resp, calls = self._call(monkeypatch, [503])
+        assert resp.status_code == 503
+        assert len(calls) == 3
+
+    def test_does_not_retry_a_billing_error(self, monkeypatch):
+        """402 is a balance state; retrying it just delays a clear message."""
+        resp, calls = self._call(monkeypatch, [402])
+        assert resp.status_code == 402
+        assert len(calls) == 1
+
+    def test_does_not_retry_a_bad_request(self, monkeypatch):
+        resp, calls = self._call(monkeypatch, [400])
+        assert resp.status_code == 400
+        assert len(calls) == 1
+
+    def test_honours_retry_after(self, monkeypatch):
+        import pipeline.images as images
+        slept = []
+        seq = iter([429, 200])
+
+        class _Resp:
+            def __init__(self, status):
+                self.status_code = status
+                self.headers = {"Retry-After": "7"}
+                self.text = "{}"
+
+        monkeypatch.setattr(images.requests, "post",
+                            lambda *a, **k: _Resp(next(seq)))
+        monkeypatch.setattr(images.time, "sleep", lambda s: slept.append(s))
+        images._post_image("http://x", {}, {"model": "m"})
+        assert slept == [7.0]
 
 
 class _FakeResponse:
