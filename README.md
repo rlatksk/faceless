@@ -15,10 +15,10 @@ Runs entirely on your machine, or leans on APIs — your choice, per stage.
 - **Transcription** — faster-whisper with word timestamps, CPU, int8
 - **Images** — OpenRouter (Gemini 3.x, Grok Imagine), Kenari (Nano Banana, Grok), or local SDXL / SDXL Turbo
 - **Parallel images** — up to 4 concurrent requests on the API providers; local diffusers stays serial
-- **Character lock** — a per-project seed so the same cast recurs across scenes
+- **Character consistency** — the script returns a fixed cast sheet that every scene prompt restates
 - **Music bed** — optional ambient track, side-chain ducked 18 dB under narration
-- **Assembly** — MoviePy + FFmpeg, 1080×1920 @ 24 fps, H.264/AAC
-- **Captions** — word-by-word highlighting with a pop-scale animation
+- **Assembly** — numpy compositor + FFmpeg, 1080×1920 @ 30 fps, H.264/AAC
+- **Captions** — word-by-word highlighting, one word lit at a time
 - **Cost estimate** before you spend anything, and actual cost tracking after
 - **Resume** — every run checkpoints to disk; failed runs restart from the last good stage
 
@@ -133,7 +133,9 @@ Add any other OpenRouter model ID in **Settings → Extra image models** (one pe
 
 **Indie Dark Comic** is the built-in style preset — a graphic-novel look with heavy ink outlines, cel shading, and high-contrast lighting. Its template contains a `[INSERT YOUR SCENE / CHARACTER HERE]` placeholder, so each scene prompt gets substituted into it. Pick **Custom** to supply your own tag instead; it is appended to each prompt as `, {your style} style`.
 
-**Lock character (same seed every image)** sends a fixed `seed` with every image request, so the cast stays consistent between scenes instead of drifting. The seed is generated once per session, shown under the toggle, and stored in `project.json` — a resumed run reproduces the same images. Models that reject the field are retried without it rather than failing; the local diffusers path gets it as a torch generator instead.
+**Lock character (same seed every image)** sends a fixed `seed` with every image request. **Kenari's image models ignore it** — they accept the field, return 200, and produce a different image each time — so on Kenari this toggle changes nothing. It is kept for providers that do honour a seed; the local diffusers path passes it as a torch generator. Models that reject the field are retried without it rather than failing.
+
+Character consistency actually comes from the script: it returns a **cast sheet** of fixed visual descriptions, and every scene prompt restates them, so the protagonist stays recognisable across scenes regardless of the provider.
 
 **Music** picks a track from `assets/music/` (Off by default, so existing behaviour is unchanged) and **Music volume** sets its level. The bed loops to the video length, fades out over the last 2 s, and is ducked 18 dB under speech using the word timestamps — so it sits at full level in pauses and drops out of the way of narration.
 
@@ -208,9 +210,9 @@ Five stages, always in this order, each one a plain function call in `app.py`:
 
 **State lives on the filesystem.** There is no database and no in-memory run state — `project.json` plus the artifacts beside it *are* the run. That is what makes resume work: the app infers which stages completed by checking which files exist.
 
-**Image generation is concurrent on the API providers.** `pipeline/images.py` runs up to `MAX_WORKERS` (4) requests at once through a thread pool, which matters because each request is a blocking round trip. `_generate_local` stays serial — one diffusers pipeline is not thread-safe. Images already on disk are skipped without a request, and the first failure still aborts the run, so the existing resume behaviour is unchanged.
+**Image generation is concurrent on the API providers.** `pipeline/images.py` runs up to `MAX_WORKERS` (4) requests at once through a thread pool, which matters because each request is a blocking round trip. `_generate_local` stays serial — one diffusers pipeline is not thread-safe. Images already on disk are skipped without a request. Transient failures retry with backoff, and every prompt is attempted even when some fail, so one blip cannot discard images that were already generated and paid for.
 
-**Assembly details.** Scene boundaries are placed by dividing total audio duration across the images, then snapping each boundary to the nearest sentence-ending word so cuts land on natural pauses. Captions are grouped into chunks of up to 5 words or 2 seconds, whichever comes first, and rendered word-by-word: a yellow highlight with a pop-scale animation, followed by the same word in white for the remainder of its duration. Font size shrinks automatically if a line would overflow the frame width.
+**Assembly details.** Scene boundaries are placed by dividing total audio duration across the images, then snapping each boundary to the nearest sentence-ending word so cuts land on natural pauses. Captions are grouped into chunks of up to 5 words or 2 seconds, whichever comes first, and rendered as a single line with the spoken word highlighted in yellow. Font size shrinks automatically if a line would overflow the frame width. Frames are composited in numpy and piped straight to ffmpeg at 30 fps.
 
 **Music ducking.** The bed is looped to the narration length, faded out over the last 2 s, and multiplied by a gain envelope sampled at 100 Hz from the word timestamps: `1.0` in pauses, `-18 dB` under speech, with a 50 ms attack and 350 ms release so the transitions are not audible as pumping. Narration is mixed on top unmodified, and the mix is scaled so it cannot clip.
 

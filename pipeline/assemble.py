@@ -17,6 +17,11 @@ _HIGHLIGHT_COLOR = "#ffcc00"
 FRAME_W = 1080
 FRAME_H = 1920
 
+# 30fps is what TikTok and Reels prefer; YouTube accepts it too. Subtitle state
+# changes are quantised to this, so raising it also makes the word highlight
+# land closer to the spoken word.
+FPS = 30
+
 MUSIC_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "music")
 
 # Ducking envelope. Speech pulls the bed down by _DUCK_DB; the ramps are what
@@ -28,7 +33,7 @@ _MUSIC_FADE_OUT = 2.0
 _MUSIC_ENV_FPS = 100.0
 
 
-def assemble(image_paths, audio_path, timestamps, output_path, fps=24,
+def assemble(image_paths, audio_path, timestamps, output_path, fps=FPS,
              music_path=None, music_volume=0.15, progress_cb=None):
     """Composite the images and subtitles, then encode.
 

@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 from PIL import Image, ImageDraw
 
-from pipeline.assemble import FRAME_H, FRAME_W, _fit_frame, _frame_owner
+from pipeline.assemble import FPS, FRAME_H, FRAME_W, _fit_frame, _frame_owner
 
 
 def _circle_image(width, height):
@@ -71,3 +71,21 @@ class TestFrameOwner:
     def test_single_image_covers_the_whole_timeline(self):
         owner = _frame_owner([0.0, 8.0], duration=8.0, fps=24)
         assert set(owner.tolist()) == {0}
+
+
+class TestFramerate:
+    """30fps is what TikTok and Reels prefer. The render must actually emit it,
+    and the frame count must match the duration or the video drifts from its
+    audio."""
+
+    def test_default_is_thirty(self):
+        assert FPS == 30
+
+    def test_frame_count_matches_duration(self):
+        for duration in (8.0, 60.0, 93.14):
+            owner = _frame_owner([0.0, duration], duration, FPS)
+            assert len(owner) == round(duration * FPS)
+            assert abs(len(owner) / FPS - duration) < 1 / FPS
+
+    def test_is_a_whole_number_of_frames_per_second(self):
+        assert float(FPS).is_integer()
