@@ -695,8 +695,18 @@ def _run_pipeline(project, out_dir, status, bar, stages):
     if steps["assemble"]["status"] != "done":
         if not images:
             raise RuntimeError("No images to assemble — the image step needs to run first.")
+
+        def render_progress(done, total):
+            bar.progress(80 + 20 * done // total)
+            stages.markdown(
+                _progress_html(project, f"Rendering frame {done} of {total}…",
+                               started, active="assemble"),
+                unsafe_allow_html=True,
+            )
+
         assemble(images, f"{out_dir}/audio.mp3", words, f"{out_dir}/final.mp4",
-                 music_path=_music_path(project), music_volume=project.get("music_volume", 0.15))
+                 music_path=_music_path(project), music_volume=project.get("music_volume", 0.15),
+                 progress_cb=render_progress)
         steps["assemble"] = {"status": "done"}
     project["status"] = "completed"
     _save_project(out_dir, project)
