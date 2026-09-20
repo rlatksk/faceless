@@ -72,6 +72,88 @@ class TestClean:
         assert "<" in _clean("x &lt; y")
 
 
+# The exact tail Reddit appends to a post body, taken from a live feed.
+FOOTER = (
+    ' &#32; submitted by &#32; '
+    '<a href="https://www.reddit.com/user/SomeUser"> /u/SomeUser </a> <br/> '
+    '<span><a href="https://www.reddit.com/r/AmItheAsshole/comments/abc/x/">[link]</a></span>'
+    ' &#32; <span><a href="https://www.reddit.com/r/AmItheAsshole/comments/abc/x/">'
+    '[comments]</a></span>'
+)
+
+
+class TestFooterRemoval:
+    """Reddit appends "submitted by /u/name [link] [comments]" after the body.
+    Narrating that is nonsense, so it must never reach the script model."""
+
+    def test_drops_the_submitted_by_attribution(self):
+        out = _clean(f"<p>My story.</p>{FOOTER}")
+        assert "submitted by" not in out
+        assert "SomeUser" not in out
+
+    def test_drops_the_link_and_comments_anchors(self):
+        out = _clean(f"<p>My story.</p>{FOOTER}")
+        assert "[link]" not in out
+        assert "[comments]" not in out
+
+    def test_keeps_the_story_itself(self):
+        out = _clean(f"<p>My story.</p>{FOOTER}")
+        assert out == "My story."
+
+    def test_footer_is_cut_before_the_sc_markers_are_stripped(self):
+        """Order matters: the marker strip would destroy the anchor the footer
+        match relies on, so the footer has to go first."""
+        body = f"<!-- SC_OFF --><div class=\"md\"><p>My story.</p></div><!-- SC_ON -->{FOOTER}"
+        out = _clean(body)
+        assert out == "My story."
+
+    def test_works_when_the_footer_has_no_leading_entity(self):
+        out = _clean('<p>Story.</p>submitted by <a href="#">/u/x</a> [link] [comments]')
+        assert "submitted by" not in out
+        assert out == "Story."
+
+
+class TestEditTruncation:
+    """An EDIT block is the author replying to commenters, not story. Narrating
+    it reads as a non-sequitur, so the post is cut at the first one."""
+
+    @pytest.mark.parametrize("marker", [
+        "EDIT: more info",
+        "Edit: more info",
+        "edit: more info",
+        "EDIT 2: more info",
+        "ETA: more info",
+        "Edit - more info",
+        "Edit — more info",
+    ])
+    def test_truncates_at_every_edit_spelling(self, marker):
+        out = _clean(f"<p>My story.</p><p>{marker}</p>")
+        assert out == "My story."
+
+    def test_keeps_text_before_the_edit(self):
+        out = _clean("<p>First part.</p><p>Second part.</p><p>EDIT: thanks for the gold</p>")
+        assert "First part." in out
+        assert "Second part." in out
+        assert "thanks for the gold" not in out
+
+    def test_drops_everything_after_the_first_edit(self):
+        out = _clean("<p>Story.</p><p>EDIT: one</p><p>EDIT 2: two</p><p>More.</p>")
+        assert out == "Story."
+
+    def test_does_not_truncate_a_word_merely_containing_edit(self):
+        """"Edited" or "editorial" mid-sentence must not cut the post."""
+        out = _clean("<p>The edited version was fine, said the editorial board.</p>")
+        assert "editorial board" in out
+
+    def test_does_not_truncate_when_edit_is_not_a_label(self):
+        out = _clean("<p>I will edit the video later.</p>")
+        assert "edit the video" in out
+
+    def test_edits_can_be_kept_when_asked(self):
+        out = _clean("<p>Story.</p><p>EDIT: extra</p>", drop_edits=False)
+        assert "EDIT: extra" in out
+
+
 class TestFetchPost:
     def test_returns_title_and_body_of_the_first_entry(self, monkeypatch):
         import pipeline.reddit as reddit

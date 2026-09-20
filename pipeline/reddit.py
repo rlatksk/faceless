@@ -45,15 +45,43 @@ def parse_post_url(url):
     return match.group("sub"), match.group("id") or match.group("short")
 
 
-def _clean(body):
-    """Turn a Reddit HTML body into plain text."""
+# Reddit appends feed furniture after the post body: "submitted by /u/name",
+# then [link] and [comments] anchors. The body itself is wrapped in
+# <!-- SC_OFF --> ... <!-- SC_ON -->, so everything past SC_ON is dropped.
+_FOOTER_RE = re.compile(r"submitted by\s*(?:&#32;)?\s*<a\b.*", re.S | re.I)
+
+# An "EDIT:" block is the author replying to their own commenters. For a
+# narrated story it is a second, later beat that reads as a non-sequitur, so the
+# post is cut at the first one. Matches "Edit:", "EDIT 2:", "ETA:" and the
+# em/en-dash variants, on their own line or after a paragraph break.
+_EDIT_RE = re.compile(
+    r"(?:^|\n)\s*(?:edit|eta)\b\s*\d*\s*[:\-–—]",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _clean(body, drop_edits=True):
+    """Turn a Reddit HTML body into plain text.
+
+    Strips the feed footer and, by default, truncates at the first EDIT block.
+    """
+    # Cut the feed footer before the marker comments are removed, so the
+    # "submitted by" text is still findable.
+    body = _FOOTER_RE.sub("", body)
     body = re.sub(r"<!--.*?-->", "", body, flags=re.S)   # SC_OFF / SC_ON markers
     body = re.sub(r"<br\s*/?>", "\n", body, flags=re.I)
     body = re.sub(r"</p>", "\n\n", body, flags=re.I)
+    body = re.sub(r"</(?:h[1-6]|li|div|blockquote)>", "\n", body, flags=re.I)
     body = re.sub(r"<[^>]+>", "", body)
     body = html.unescape(body)
     body = re.sub(r"[ \t]+\n", "\n", body)
-    return re.sub(r"\n{3,}", "\n\n", body).strip()
+    body = re.sub(r"\n{3,}", "\n\n", body).strip()
+
+    if drop_edits:
+        match = _EDIT_RE.search(body)
+        if match:
+            body = body[:match.start()].strip()
+    return body
 
 
 def fetch_post(url):
